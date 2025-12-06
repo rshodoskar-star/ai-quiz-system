@@ -1,5 +1,6 @@
 // ====================================
 // AI Quiz System - Backend Server
+// FIXED VERSION - JSON Parse Error Resolved
 // ====================================
 
 require('dotenv').config();
@@ -174,6 +175,7 @@ function cleanText(text) {
 
 /**
  * Call OpenAI to extract questions
+ * FIXED: Removed response_format to prevent JSON parse errors
  */
 async function extractQuestionsWithAI(text, retryCount = 0) {
   const MAX_RETRIES = 2;
@@ -181,12 +183,13 @@ async function extractQuestionsWithAI(text, retryCount = 0) {
   try {
     console.log(`Calling OpenAI (attempt ${retryCount + 1})...`);
     
+    // FIXED: Removed response_format: { type: "json_object" } that was causing issues
     const completion = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       messages: [
         {
           role: 'system',
-          content: 'أنت خبير في استخراج وتنظيم أسئلة الامتحانات من النصوص العربية.'
+          content: 'أنت خبير في استخراج وتنظيم أسئلة الامتحانات من النصوص العربية. يجب أن يكون الرد بصيغة JSON صالحة فقط بدون أي نص إضافي.'
         },
         {
           role: 'user',
@@ -194,28 +197,39 @@ async function extractQuestionsWithAI(text, retryCount = 0) {
         }
       ],
       temperature: 0.3,
-      max_tokens: 4000,
-      response_format: { type: "json_object" }
+      max_tokens: 4000
     });
 
     const response = completion.choices[0].message.content;
     console.log('OpenAI response received');
     
-    // Try to parse JSON
+    // Try to parse JSON with better error handling
     let questions;
     try {
-      const parsed = JSON.parse(response);
+      // Remove markdown code blocks if present
+      let cleanedResponse = response.trim();
+      cleanedResponse = cleanedResponse.replace(/^```json\s*/i, '');
+      cleanedResponse = cleanedResponse.replace(/^```\s*/i, '');
+      cleanedResponse = cleanedResponse.replace(/\s*```$/i, '');
+      cleanedResponse = cleanedResponse.trim();
+      
+      const parsed = JSON.parse(cleanedResponse);
       // Handle different possible response formats
-      questions = Array.isArray(parsed) ? parsed : parsed.questions || [];
+      questions = Array.isArray(parsed) ? parsed : (parsed.questions || []);
     } catch (parseError) {
       console.error('JSON parse error:', parseError);
+      console.error('Response was:', response.substring(0, 500));
       
-      // Try to extract JSON from response
+      // Try to extract JSON array from response
       const jsonMatch = response.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
-        questions = JSON.parse(jsonMatch[0]);
+        try {
+          questions = JSON.parse(jsonMatch[0]);
+        } catch (e) {
+          throw new Error('فشل تحليل استجابة AI - JSON غير صالح');
+        }
       } else {
-        throw new Error('فشل تحليل استجابة AI');
+        throw new Error('فشل تحليل استجابة AI - لم يتم العثور على JSON');
       }
     }
 
@@ -237,7 +251,7 @@ async function extractQuestionsWithAI(text, retryCount = 0) {
       return extractQuestionsWithAI(text, retryCount + 1);
     }
     
-    throw new Error('فشل استخراج الأسئلة باستخدام الذكاء الاصطناعي');
+    throw new Error('فشل استخراج الأسئلة باستخدام الذكاء الاصطناعي: ' + error.message);
   }
 }
 
@@ -246,16 +260,32 @@ async function extractQuestionsWithAI(text, retryCount = 0) {
  */
 function validateQuestions(questions) {
   if (!Array.isArray(questions)) {
+    console.error('Questions is not an array:', typeof questions);
     return [];
   }
 
   return questions.filter(q => {
     // Check required fields
-    if (!q.question || typeof q.question !== 'string') return false;
-    if (!Array.isArray(q.options)) return false;
-    if (q.options.length < 2) return false;
-    if (typeof q.correct !== 'number') return false;
-    if (q.correct < 0 || q.correct >= q.options.length) return false;
+    if (!q.question || typeof q.question !== 'string') {
+      console.log('Invalid question: missing or invalid question text');
+      return false;
+    }
+    if (!Array.isArray(q.options)) {
+      console.log('Invalid question: options is not an array');
+      return false;
+    }
+    if (q.options.length < 2) {
+      console.log('Invalid question: less than 2 options');
+      return false;
+    }
+    if (typeof q.correct !== 'number') {
+      console.log('Invalid question: correct is not a number');
+      return false;
+    }
+    if (q.correct < 0 || q.correct >= q.options.length) {
+      console.log('Invalid question: correct index out of range');
+      return false;
+    }
     
     // Clean fields
     q.question = q.question.trim();
@@ -388,7 +418,7 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('====================================');
-  console.log('🚀 AI Quiz System Server');
+  console.log('🚀 AI Quiz System Server - FIXED');
   console.log('====================================');
   console.log(`📡 Server running on: http://localhost:${PORT}`);
   console.log(`🤖 AI Model: ${OPENAI_MODEL}`);
