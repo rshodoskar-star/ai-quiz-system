@@ -1,6 +1,6 @@
 // ====================================
-// AI Quiz System - Backend Server V2.2 ULTIMATE
-// FIXED: Arabic encoding + Better extraction
+// AI Quiz System - Backend Server V2.2 FIXED
+// FIXED: Syntax error in AI_PROMPT
 // ====================================
 
 require('dotenv').config();
@@ -12,14 +12,9 @@ const OpenAI = require('openai');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 
-// ====================================
-// Configuration
-// ====================================
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// OpenAI Configuration
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
@@ -27,8 +22,6 @@ const openai = new OpenAI({
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const MAX_PDF_SIZE_MB = parseInt(process.env.MAX_PDF_SIZE_MB) || 50;
 const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
-
-// Chunking Configuration
 const CHUNK_SIZE = 6000;
 const MAX_TOKENS_PER_REQUEST = 5000;
 
@@ -90,9 +83,7 @@ app.use('/api/', limiter);
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
-  limits: {
-    fileSize: MAX_PDF_SIZE_BYTES
-  },
+  limits: { fileSize: MAX_PDF_SIZE_BYTES },
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'application/pdf') {
       cb(null, true);
@@ -103,7 +94,7 @@ const upload = multer({
 });
 
 // ====================================
-// ULTIMATE AI Prompt - Local Version (Original)
+// AI Prompt - FIXED (no backticks inside)
 // ====================================
 
 const AI_PROMPT = `أنت خبير في استخراج وتحويل أسئلة الامتحانات إلى صيغة JSON.
@@ -140,25 +131,20 @@ const AI_PROMPT = `أنت خبير في استخراج وتحويل أسئلة �
 
 مهم جداً:
 - JSON فقط بدون أي نص إضافي
-- بدون markdown (```json)
+- بدون markdown او backticks
 - بدون شرح
 - استخرج فقط الأسئلة الواضحة والمقروءة
 
 النص:`;
 
 // ====================================
-// ULTIMATE Arabic Text Fixing
+// Arabic Text Fixing
 // ====================================
 
-/**
- * ULTIMATE fix for Arabic text encoding issues
- */
 function fixArabicTextUltimate(text) {
   try {
-    // Step 1: Normalize Unicode
     text = text.normalize('NFC');
     
-    // Step 2: Fix common Windows-1256 / ISO-8859-6 encoding issues
     const encodingFixes = {
       'Ø£': 'أ', 'Ø¥': 'إ', 'Ø¢': 'آ', 'Ø¤': 'ؤ', 'Ø¦': 'ئ',
       'Ø§': 'ا', 'Ø¨': 'ب', 'Øª': 'ت', 'Ø«': 'ث', 'Ø¬': 'ج',
@@ -166,29 +152,14 @@ function fixArabicTextUltimate(text) {
       'Ø²': 'ز', 'Ø³': 'س', 'Ø´': 'ش', 'Øµ': 'ص', 'Ø¶': 'ض',
       'Ø·': 'ط', 'Ø¸': 'ظ', 'Ø¹': 'ع', 'Øº': 'غ', 'Ù': 'ف',
       'Ù‚': 'ق', 'Ùƒ': 'ك', 'Ù„': 'ل', 'Ù…': 'م', 'Ù†': 'ن',
-      'Ù‡': 'ه', 'Ùˆ': 'و', 'ÙŠ': 'ي', 'Ù‰': 'ى', 'Ø©': 'ة',
-      'Ù': 'ف', 'Ù': 'ق', 'Ù': 'ل'
+      'Ù‡': 'ه', 'Ùˆ': 'و', 'ÙŠ': 'ي', 'Ù‰': 'ى', 'Ø©': 'ة'
     };
     
     for (const [wrong, correct] of Object.entries(encodingFixes)) {
       text = text.replace(new RegExp(wrong, 'g'), correct);
     }
     
-    // Step 3: Fix reversed text (RTL issues)
-    // Detect if text is severely garbled
-    const arabicChars = (text.match(/[\u0600-\u06FF]/g) || []).length;
-    const totalChars = text.length;
-    const arabicRatio = arabicChars / totalChars;
-    
-    // If less than 30% Arabic in supposed Arabic text, it's likely corrupted
-    if (arabicRatio < 0.3 && totalChars > 50) {
-      console.warn('⚠️ Text appears to be corrupted (low Arabic ratio:', arabicRatio, ')');
-    }
-    
-    // Step 4: Remove zero-width and control characters
     text = text.replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '');
-    
-    // Step 5: Fix common character substitutions
     text = text.replace(/[àáâãäå]/g, 'ا');
     text = text.replace(/[èéêë]/g, 'ه');
     text = text.replace(/[ìíîï]/g, 'ي');
@@ -196,39 +167,28 @@ function fixArabicTextUltimate(text) {
     
     return text;
   } catch (error) {
-    console.error('❌ Error fixing Arabic text:', error);
+    console.error('Error fixing text:', error);
     return text;
   }
 }
 
-/**
- * Check if text is readable Arabic (not garbled)
- */
 function isReadableArabic(text) {
   if (!text || text.length < 3) return false;
   
-  // Count Arabic characters
   const arabicChars = (text.match(/[\u0600-\u06FF]/g) || []).length;
   const totalChars = text.replace(/\s/g, '').length;
   
   if (totalChars === 0) return false;
   
   const arabicRatio = arabicChars / totalChars;
-  
-  // Should have at least 40% Arabic characters for Arabic text
-  // Or should be pure English (for mixed content)
   const latinChars = (text.match(/[a-zA-Z]/g) || []).length;
   const latinRatio = latinChars / totalChars;
   
   return arabicRatio > 0.4 || latinRatio > 0.6;
 }
 
-/**
- * Extract text from PDF with multiple encoding attempts
- */
 async function extractTextFromPDF(buffer) {
   try {
-    // Attempt 1: Standard extraction
     const data = await pdfParse(buffer, {
       max: 0,
       normalizeWhitespace: true,
@@ -236,88 +196,52 @@ async function extractTextFromPDF(buffer) {
     });
     
     let text = data.text;
-    console.log(`📄 Extracted ${text.length} characters from PDF`);
+    console.log(`📄 Extracted ${text.length} chars`);
     
-    // Fix Arabic encoding
     text = fixArabicTextUltimate(text);
     
-    // Check if text is readable
     const sample = text.substring(0, Math.min(500, text.length));
     if (!isReadableArabic(sample)) {
-      console.warn('⚠️ Warning: Extracted text may have encoding issues');
-      console.warn('Sample:', sample.substring(0, 100));
+      console.warn('⚠️ Text may have encoding issues');
     }
     
     return text;
   } catch (error) {
-    console.error('❌ PDF extraction error:', error);
-    throw new Error('فشل استخراج النص من ملف PDF. تأكد من أن الملف غير محمي أو مشفر.');
+    console.error('PDF error:', error);
+    throw new Error('فشل استخراج النص من PDF');
   }
 }
 
-/**
- * Clean extracted text
- */
 function cleanText(text) {
-  // Remove headers/footers
   text = text.replace(/تصميم وتطوير ال[رب]مجيات.*?\d{10}/gi, '');
   text = text.replace(/أبو سليم للخدمات الطالبية.*?/gi, '');
-  text = text.replace(/خربة? منذ \d{4}/gi, '');
-  text = text.replace(/واتساب[\/:]?\s*\d{10}/gi, '');
-  text = text.replace(/ال نحلل نرشه.*?/gi, '');
-  
-  // Remove page numbers
   text = text.replace(/صفحة\s*\d+/gi, '');
   text = text.replace(/\d+\s*\/\s*\d+/g, '');
-  
-  // Normalize whitespace
   text = text.replace(/\s+/g, ' ');
   text = text.replace(/\n{3,}/g, '\n\n');
-  
   return text.trim();
 }
 
-/**
- * Smart split into chunks
- */
 function splitIntoChunks(text, chunkSize = CHUNK_SIZE) {
   const chunks = [];
   const questionPattern = /(?=\n\s*(?:\d+[\.\):]|\([أابتث]\)|س\s*\d+|سؤال\s*\d+))/g;
-  const questionBlocks = text.split(questionPattern).filter(block => block.trim());
+  const questionBlocks = text.split(questionPattern).filter(b => b.trim());
   
   if (questionBlocks.length <= 1) {
     const paragraphs = text.split(/\n\n+/);
     let currentChunk = '';
     
-    for (const paragraph of paragraphs) {
-      if ((currentChunk + paragraph).length <= chunkSize) {
-        currentChunk += paragraph + '\n\n';
+    for (const p of paragraphs) {
+      if ((currentChunk + p).length <= chunkSize) {
+        currentChunk += p + '\n\n';
       } else {
         if (currentChunk) chunks.push(currentChunk.trim());
-        
-        if (paragraph.length > chunkSize) {
-          const words = paragraph.split(/\s+/);
-          let tempChunk = '';
-          for (const word of words) {
-            if ((tempChunk + word).length <= chunkSize) {
-              tempChunk += word + ' ';
-            } else {
-              if (tempChunk) chunks.push(tempChunk.trim());
-              tempChunk = word + ' ';
-            }
-          }
-          if (tempChunk) currentChunk = tempChunk;
-          else currentChunk = '';
-        } else {
-          currentChunk = paragraph + '\n\n';
-        }
+        currentChunk = p + '\n\n';
       }
     }
-    
     if (currentChunk) chunks.push(currentChunk.trim());
   } else {
     let currentChunk = '';
-    
     for (const block of questionBlocks) {
       if ((currentChunk + block).length <= chunkSize) {
         currentChunk += block;
@@ -326,28 +250,24 @@ function splitIntoChunks(text, chunkSize = CHUNK_SIZE) {
         currentChunk = block;
       }
     }
-    
     if (currentChunk) chunks.push(currentChunk.trim());
   }
   
-  console.log(`📦 Split into ${chunks.length} chunks (avg ${Math.round(text.length / chunks.length)} chars)`);
+  console.log(`📦 ${chunks.length} chunks`);
   return chunks;
 }
 
-/**
- * Extract questions from chunk with strict validation
- */
 async function extractQuestionsFromChunk(text, chunkIndex, totalChunks) {
   let questions = [];
   try {
-    console.log(`🔄 Processing chunk ${chunkIndex + 1}/${totalChunks} (${text.length} chars)`);
+    console.log(`🔄 Chunk ${chunkIndex + 1}/${totalChunks}`);
     
     const completion = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       messages: [
         {
           role: 'system',
-          content: 'أنت خبير في استخراج أسئلة الامتحانات. استخرج فقط الأسئلة الواضحة والمقروءة. تجاهل أي نص متلخبط أو غير مفهوم.'
+          content: 'أنت خبير في استخراج أسئلة الامتحانات. استخرج فقط الأسئلة الواضحة.'
         },
         {
           role: 'user',
@@ -361,50 +281,41 @@ async function extractQuestionsFromChunk(text, chunkIndex, totalChunks) {
     const response = completion.choices[0].message.content;
     
     try {
-      let cleanedResponse = response.trim();
-      cleanedResponse = cleanedResponse.replace(/^```json\s*/i, '');
-      cleanedResponse = cleanedResponse.replace(/^```\s*/i, '');
-      cleanedResponse = cleanedResponse.replace(/\s*```$/i, '');
-      cleanedResponse = cleanedResponse.trim();
+      let cleaned = response.trim()
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
       
-      const parsed = JSON.parse(cleanedResponse);
+      const parsed = JSON.parse(cleaned);
       questions = Array.isArray(parsed) ? parsed : (parsed.questions || []);
-    } catch (parseError) {
-      console.error('⚠️ JSON parse error:', parseError.message);
-      
+    } catch (e) {
       const jsonMatch = response.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         questions = JSON.parse(jsonMatch[0]);
-      } else {
-        questions = [];
       }
     }
 
     const validated = validateQuestionsStrict(questions);
-    console.log(`✅ Chunk ${chunkIndex + 1}/${totalChunks}: Extracted ${validated.length} valid questions (rejected ${questions.length - validated.length})`);
+    console.log(`✅ Chunk ${chunkIndex + 1}: ${validated.length} valid (rejected ${questions.length - validated.length})`);
     
     return validated;
-    
   } catch (error) {
-    console.error(`❌ Error chunk ${chunkIndex + 1}:`, error.message);
+    console.error(`❌ Chunk ${chunkIndex + 1}:`, error.message);
     return [];
   }
 }
 
-/**
- * Extract questions with chunking
- */
 async function extractQuestionsWithAI(text, requestId) {
   try {
-    const textLength = text.length;
-    console.log(`📝 Total text: ${textLength} chars`);
+    console.log(`📝 ${text.length} chars`);
     
-    if (textLength <= CHUNK_SIZE) {
+    if (text.length <= CHUNK_SIZE) {
       updateProgress(requestId, 70, 'استخراج الأسئلة...');
       return await extractQuestionsFromChunk(text, 0, 1);
     }
     
-    updateProgress(requestId, 55, 'تقسيم النص...');
+    updateProgress(requestId, 55, 'تقسيم...');
     const chunks = splitIntoChunks(text, CHUNK_SIZE);
     
     const allQuestions = [];
@@ -414,76 +325,63 @@ async function extractQuestionsWithAI(text, requestId) {
       const progress = 55 + Math.round((i + 1) * progressPerChunk);
       updateProgress(requestId, progress, `استخراج... (${i + 1}/${chunks.length})`);
       
-      const questions = await extractQuestionsFromChunk(chunks[i], i, chunks.length);
-      allQuestions.push(...questions);
+      const qs = await extractQuestionsFromChunk(chunks[i], i, chunks.length);
+      allQuestions.push(...qs);
       
       if (i < chunks.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(r => setTimeout(r, 500));
       }
     }
     
-    console.log(`🎯 Total extracted: ${allQuestions.length} questions from ${chunks.length} chunks`);
+    console.log(`🎯 Total: ${allQuestions.length} questions`);
     return allQuestions;
-    
   } catch (error) {
-    console.error('❌ Error in extraction:', error);
+    console.error('Error:', error);
     throw error;
   }
 }
 
-/**
- * STRICT validation - Reject garbled text
- */
 function validateQuestionsStrict(questions) {
-  if (!Array.isArray(questions)) {
-    return [];
-  }
+  if (!Array.isArray(questions)) return [];
 
   let rejected = {
     noQuestion: 0,
     garbledQuestion: 0,
     noOptions: 0,
-    fewOptions: 0,
     garbledOptions: 0,
     noCorrect: 0,
     invalidCorrect: 0
   };
 
   const validated = questions.filter(q => {
-    // Check question exists
     if (!q.question || typeof q.question !== 'string' || q.question.trim().length < 5) {
       rejected.noQuestion++;
       return false;
     }
     
-    // Check if question is readable
     if (!isReadableArabic(q.question)) {
       rejected.garbledQuestion++;
-      console.log(`🚫 Rejected garbled question: "${q.question.substring(0, 50)}..."`);
+      console.log(`🚫 Garbled Q: "${q.question.substring(0, 50)}"`);
       return false;
     }
     
-    // Check options
     if (!Array.isArray(q.options) || q.options.length < 2) {
       rejected.noOptions++;
       return false;
     }
     
-    // Check each option is readable
-    for (const option of q.options) {
-      if (!option || typeof option !== 'string' || option.trim().length < 1) {
+    for (const opt of q.options) {
+      if (!opt || typeof opt !== 'string' || opt.trim().length < 1) {
         rejected.garbledOptions++;
         return false;
       }
-      
-      if (!isReadableArabic(option)) {
+      if (!isReadableArabic(opt)) {
         rejected.garbledOptions++;
-        console.log(`🚫 Rejected garbled option: "${option}"`);
+        console.log(`🚫 Garbled opt: "${opt}"`);
         return false;
       }
     }
     
-    // Check correct answer
     if (typeof q.correct !== 'number') {
       rejected.noCorrect++;
       return false;
@@ -494,9 +392,8 @@ function validateQuestionsStrict(questions) {
       return false;
     }
     
-    // Clean fields
     q.question = q.question.trim();
-    q.options = q.options.map(opt => String(opt).trim());
+    q.options = q.options.map(o => String(o).trim());
     if (q.chapter) q.chapter = String(q.chapter).trim();
     
     return true;
@@ -504,8 +401,7 @@ function validateQuestionsStrict(questions) {
 
   const totalRejected = Object.values(rejected).reduce((a, b) => a + b, 0);
   if (totalRejected > 0) {
-    console.log(`⚠️ Validation: Rejected ${totalRejected} questions`);
-    console.log('Reasons:', rejected);
+    console.log(`⚠️ Rejected ${totalRejected}:`, rejected);
   }
 
   return validated;
@@ -518,100 +414,79 @@ function validateQuestionsStrict(questions) {
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
-    message: 'Server is running',
-    timestamp: new Date().toISOString(),
+    message: 'Server running',
     model: OPENAI_MODEL,
-    version: '2.2-ULTIMATE'
+    version: '2.2-FIXED'
   });
 });
 
 app.get('/api/progress/:requestId', (req, res) => {
-  const { requestId } = req.params;
-  const progress = getProgress(requestId);
-  res.json(progress);
+  res.json(getProgress(req.params.requestId));
 });
 
 app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
-  const startTime = Date.now();
-  const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const start = Date.now();
+  const reqId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   try {
     if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        error: 'لم يتم رفع أي ملف'
-      });
+      return res.status(400).json({ success: false, error: 'لم يتم رفع ملف' });
     }
 
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 [${requestId}] Processing: ${req.file.originalname} (${req.file.size} bytes)`);
-    console.log('='.repeat(60));
+    console.log(`\n${'='.repeat(50)}`);
+    console.log(`🚀 [${reqId}] ${req.file.originalname}`);
+    console.log('='.repeat(50));
 
-    updateProgress(requestId, 10, 'رفع الملف...');
-    await new Promise(resolve => setTimeout(resolve, 500));
+    updateProgress(reqId, 10, 'رفع...');
+    await new Promise(r => setTimeout(r, 500));
     
-    updateProgress(requestId, 25, 'استخراج النص...');
+    updateProgress(reqId, 25, 'استخراج...');
     const rawText = await extractTextFromPDF(req.file.buffer);
     
     if (!rawText || rawText.length < 100) {
-      clearProgress(requestId);
-      return res.status(400).json({
-        success: false,
-        error: 'الملف لا يحتوي على نص كافٍ'
-      });
+      clearProgress(reqId);
+      return res.status(400).json({ success: false, error: 'نص غير كافي' });
     }
 
-    updateProgress(requestId, 40, 'تنظيف النص...');
-    const cleanedText = cleanText(rawText);
-    console.log(`✨ Cleaned: ${cleanedText.length} chars`);
+    updateProgress(reqId, 40, 'تنظيف...');
+    const cleaned = cleanText(rawText);
 
-    updateProgress(requestId, 50, 'بدء الاستخراج...');
-    const questions = await extractQuestionsWithAI(cleanedText, requestId);
+    updateProgress(reqId, 50, 'بدء...');
+    const questions = await extractQuestionsWithAI(cleaned, reqId);
 
     if (!questions || questions.length === 0) {
-      clearProgress(requestId);
-      return res.status(400).json({
-        success: false,
-        error: 'لم يتم العثور على أسئلة واضحة. تأكد من أن الملف يحتوي على أسئلة بصيغة صحيحة.'
-      });
+      clearProgress(reqId);
+      return res.status(400).json({ success: false, error: 'لا توجد أسئلة واضحة' });
     }
 
-    updateProgress(requestId, 95, 'جاري الإنهاء...');
+    updateProgress(reqId, 95, 'إنهاء...');
     
     const chapters = [...new Set(questions.map(q => q.chapter).filter(Boolean))];
-    const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    const time = ((Date.now() - start) / 1000).toFixed(2);
     
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`✅ SUCCESS! Extracted ${questions.length} questions in ${processingTime}s`);
-    console.log('='.repeat(60) + '\n');
+    console.log(`✅ ${questions.length} questions in ${time}s\n`);
 
-    updateProgress(requestId, 100, 'تم بنجاح! ✅');
-    setTimeout(() => clearProgress(requestId), 5000);
+    updateProgress(reqId, 100, 'تم! ✅');
+    setTimeout(() => clearProgress(reqId), 5000);
 
     res.json({
       success: true,
-      requestId: requestId,
+      requestId: reqId,
       totalQuestions: questions.length,
       chapters: chapters,
       questions: questions,
-      processingTime: `${processingTime}s`
+      processingTime: `${time}s`
     });
 
   } catch (error) {
-    console.error(`❌ [${requestId}] Error:`, error);
-    clearProgress(requestId);
+    console.error(`❌ [${reqId}]:`, error);
+    clearProgress(reqId);
     
     if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        success: false,
-        error: `حجم الملف أكبر من ${MAX_PDF_SIZE_MB}MB`
-      });
+      return res.status(400).json({ success: false, error: `أكبر من ${MAX_PDF_SIZE_MB}MB` });
     }
 
-    res.status(500).json({
-      success: false,
-      error: error.message || 'حدث خطأ أثناء المعالجة'
-    });
+    res.status(500).json({ success: false, error: error.message || 'خطأ' });
   }
 });
 
@@ -620,33 +495,18 @@ app.get('/', (req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error('Server error:', err);
-  res.status(500).json({
-    success: false,
-    error: err.message || 'حدث خطأ في الخادم'
-  });
+  console.error('Error:', err);
+  res.status(500).json({ success: false, error: err.message });
 });
 
-// ====================================
-// Start Server
-// ====================================
-
 app.listen(PORT, () => {
-  console.log('\n' + '='.repeat(60));
-  console.log('🚀 AI Quiz System Server V2.2 ULTIMATE');
-  console.log('='.repeat(60));
-  console.log(`📡 Server: http://localhost:${PORT}`);
+  console.log('\n' + '='.repeat(50));
+  console.log('🚀 AI Quiz System V2.2 FIXED');
+  console.log('='.repeat(50));
+  console.log(`📡 Port: ${PORT}`);
   console.log(`🤖 Model: ${OPENAI_MODEL}`);
-  console.log(`📁 Max PDF: ${MAX_PDF_SIZE_MB}MB`);
-  console.log(`📦 Chunk: ${CHUNK_SIZE} chars`);
-  console.log(`🔒 Rate: ${process.env.RATE_LIMIT_MAX_REQUESTS || 10} req/hour`);
-  console.log('✨ Features:');
-  console.log('   - ULTIMATE Arabic Encoding Fix');
-  console.log('   - Strict Garbled Text Detection');
-  console.log('   - Original Local Prompt');
-  console.log('   - Smart Chunking');
-  console.log('   - Progress Tracking');
-  console.log('='.repeat(60) + '\n');
+  console.log(`✅ Syntax error FIXED`);
+  console.log('='.repeat(50) + '\n');
 });
 
 module.exports = app;
