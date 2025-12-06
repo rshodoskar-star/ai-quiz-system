@@ -1,7 +1,7 @@
 // ====================================
-// AI Quiz System V4.0 VISION
-// Uses GPT-4 Vision to READ PDF images directly
-// Solves: encoding issues + garbled text + missing questions
+// AI Quiz System V4.1 ULTIMATE SIMPLE
+// Simple approach: PDF → Raw Text → GPT-4 → All Questions
+// No complex processing, no chunking, just direct extraction
 // ====================================
 
 require('dotenv').config();
@@ -12,11 +12,6 @@ const pdfParse = require('pdf-parse');
 const OpenAI = require('openai');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
-const { exec } = require('child_process');
-const { promisify } = require('util');
-const fs = require('fs').promises;
-
-const execAsync = promisify(exec);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,10 +21,8 @@ const openai = new OpenAI({
 });
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
-const VISION_MODEL = 'gpt-4o'; // Vision support
 const MAX_PDF_SIZE_MB = parseInt(process.env.MAX_PDF_SIZE_MB) || 50;
 const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
-const USE_VISION = process.env.USE_VISION === 'true' || true; // Enable by default
 
 // Progress tracking
 const progressStore = new Map();
@@ -70,7 +63,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 const limiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 10,
-  message: { success: false, error: 'تم تجاوز الحد الأقصى' }
+  message: { success: false, error: 'تم تجاوز الحد الأقصى للطلبات' }
 });
 
 app.use('/api/', limiter);
@@ -89,132 +82,170 @@ const upload = multer({
 });
 
 // ====================================
-// VISION Prompt
+// SIMPLE AI Prompt - Extract Everything
 // ====================================
 
-const VISION_PROMPT = `أنت خبير في قراءة وتحليل أسئلة الامتحانات من الصور.
+const SIMPLE_PROMPT = `أنت خبير في قراءة وإعادة كتابة أسئلة الامتحانات.
 
-المهمة: اقرأ الصورة واستخرج جميع أسئلة الاختيار من متعدد (MCQ).
+المهمة:
+اقرأ النص التالي بدقة واستخرج جميع أسئلة الاختيار من متعدد (MCQ) الموجودة فيه.
 
-القواعد:
-1. اقرأ كل سؤال بدقة كما هو مكتوب في الصورة
-2. لكل سؤال:
-   - question: نص السؤال بالضبط
-   - options: جميع الخيارات (2-6)
-   - correct: رقم الخيار الصحيح (من 0)
-   - chapter: اسم الفصل إن وجد
+القواعد المهمة:
+1. استخرج كل الأسئلة - لا تترك أي سؤال
+2. أعد كتابة كل سؤال بالضبط كما هو في النص
+3. أعد كتابة كل الخيارات بالضبط
+4. استخرج الإجابة الصحيحة
 
-3. استخرج كل الأسئلة - لا تترك شيئاً
-4. احرص على الدقة في الحروف العربية
+5. لكل سؤال، أنشئ JSON بهذا الشكل:
+{
+  "chapter": "اسم الفصل إن وجد",
+  "question": "نص السؤال بالضبط",
+  "options": ["الخيار 1", "الخيار 2", "الخيار 3", "الخيار 4"],
+  "correct": 0
+}
 
-الصيغة - JSON فقط:
+6. رقم correct يبدأ من 0 (الخيار الأول = 0، الثاني = 1، إلخ)
+
+الصيغة المطلوبة - JSON Array فقط:
 [
   {
     "chapter": "الفصل الأول",
     "question": "ما هو تعريف البرمجيات؟",
-    "options": ["التعليمات والبرامج", "الأجهزة", "الشبكات", "قواعد البيانات"],
+    "options": ["مجموعة من التعليمات", "الأجهزة المادية", "الشبكات", "قواعد البيانات"],
     "correct": 0
+  },
+  {
+    "chapter": "الفصل الأول", 
+    "question": "السؤال الثاني...",
+    "options": ["خيار 1", "خيار 2", "خيار 3", "خيار 4"],
+    "correct": 2
   }
 ]
 
-مهم جداً:
-- JSON فقط بدون markdown
-- استخرج كل الأسئلة الموجودة في الصورة
-- احرص على دقة النص العربي`;
+تعليمات مهمة جداً:
+- JSON فقط، بدون أي نص إضافي
+- بدون markdown (لا تكتب \`\`\`json)
+- بدون شرح أو تعليقات
+- استخرج كل الأسئلة الموجودة في النص
+- لا تخترع أسئلة - فقط ما هو موجود
+- احرص على الدقة في إعادة الكتابة
+
+النص:`;
 
 // ====================================
-// PDF to Images (using pdf-poppler or pdftoppm)
+// Simple PDF Extraction
 // ====================================
 
-async function convertPDFToImages(pdfBuffer, requestId) {
+async function extractTextFromPDF(buffer) {
   try {
-    // Create temp directory
-    const tempDir = `/tmp/pdf_${Date.now()}`;
-    await fs.mkdir(tempDir, { recursive: true });
-    
-    // Save PDF to temp file
-    const pdfPath = `${tempDir}/input.pdf`;
-    await fs.writeFile(pdfPath, pdfBuffer);
-    
-    console.log(`📄 Converting PDF to images...`);
-    
-    // Try pdftoppm (usually available in Linux)
-    try {
-      const outputPrefix = `${tempDir}/page`;
-      await execAsync(`pdftoppm -png -r 150 "${pdfPath}" "${outputPrefix}"`);
-      
-      // Get all generated images
-      const files = await fs.readdir(tempDir);
-      const imageFiles = files
-        .filter(f => f.startsWith('page') && f.endsWith('.png'))
-        .sort();
-      
-      console.log(`✅ Converted to ${imageFiles.length} images`);
-      
-      // Read images as base64
-      const images = [];
-      for (const file of imageFiles) {
-        const imgPath = `${tempDir}/${file}`;
-        const imgBuffer = await fs.readFile(imgPath);
-        const base64 = imgBuffer.toString('base64');
-        images.push(base64);
-      }
-      
-      // Cleanup
-      await fs.rm(tempDir, { recursive: true, force: true });
-      
-      return images;
-      
-    } catch (pdfError) {
-      console.warn('pdftoppm not available, falling back to text extraction');
-      await fs.rm(tempDir, { recursive: true, force: true });
-      return null;
-    }
-    
+    const data = await pdfParse(buffer);
+    return data.text;
   } catch (error) {
-    console.error('Error converting PDF:', error);
-    return null;
+    console.error('PDF extraction error:', error);
+    throw new Error('فشل استخراج النص من PDF');
   }
 }
 
 // ====================================
-// Extract questions using Vision
+// Simple Question Extraction - One Call
 // ====================================
 
-async function extractQuestionsFromImage(base64Image, pageNum, totalPages) {
+async function extractAllQuestions(text, requestId) {
   try {
-    console.log(`👁️ Reading page ${pageNum}/${totalPages} with Vision...`);
+    console.log(`📝 Text length: ${text.length} characters`);
+    
+    // If text is too long, split into manageable parts
+    const MAX_TEXT_LENGTH = 100000; // ~25k tokens
+    
+    if (text.length > MAX_TEXT_LENGTH) {
+      console.log('⚠️ Text too long, splitting...');
+      updateProgress(requestId, 60, 'النص طويل، معالجة متعددة...');
+      
+      // Split by obvious markers (questions, pages, etc)
+      const parts = splitTextIntelligently(text, MAX_TEXT_LENGTH);
+      
+      let allQuestions = [];
+      const progressPerPart = 30 / parts.length;
+      
+      for (let i = 0; i < parts.length; i++) {
+        const progress = 60 + Math.round((i + 1) * progressPerPart);
+        updateProgress(requestId, progress, `معالجة جزء ${i + 1}/${parts.length}...`);
+        
+        const questions = await extractQuestionsFromText(parts[i]);
+        allQuestions.push(...questions);
+        
+        if (i < parts.length - 1) {
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+      
+      return allQuestions;
+    } else {
+      updateProgress(requestId, 60, 'استخراج جميع الأسئلة...');
+      return await extractQuestionsFromText(text);
+    }
+    
+  } catch (error) {
+    console.error('Extraction error:', error);
+    throw error;
+  }
+}
+
+function splitTextIntelligently(text, maxLength) {
+  const parts = [];
+  
+  // Try to split by question markers
+  const questionPattern = /(?=(?:\n|^)\s*(?:\d+[\.\):]|س\s*\d+|سؤال\s*\d+))/g;
+  const questionBlocks = text.split(questionPattern).filter(b => b.trim());
+  
+  if (questionBlocks.length > 1) {
+    let currentPart = '';
+    
+    for (const block of questionBlocks) {
+      if ((currentPart + block).length <= maxLength) {
+        currentPart += block;
+      } else {
+        if (currentPart) parts.push(currentPart);
+        currentPart = block;
+      }
+    }
+    
+    if (currentPart) parts.push(currentPart);
+  } else {
+    // Fallback: simple split
+    for (let i = 0; i < text.length; i += maxLength) {
+      parts.push(text.substring(i, i + maxLength));
+    }
+  }
+  
+  console.log(`📦 Split into ${parts.length} parts`);
+  return parts;
+}
+
+async function extractQuestionsFromText(text) {
+  try {
+    console.log(`🤖 Calling GPT-4 to extract all questions...`);
     
     const completion = await openai.chat.completions.create({
-      model: VISION_MODEL,
+      model: OPENAI_MODEL,
       messages: [
         {
           role: 'system',
-          content: 'أنت خبير في قراءة أسئلة الامتحانات من الصور بدقة عالية.'
+          content: 'أنت خبير في قراءة وإعادة كتابة أسئلة الامتحانات بدقة عالية. استخرج كل الأسئلة بالضبط كما هي.'
         },
         {
           role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: VISION_PROMPT
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:image/png;base64,${base64Image}`,
-                detail: 'high'
-              }
-            }
-          ]
+          content: `${SIMPLE_PROMPT}\n\n${text}`
         }
       ],
-      max_tokens: 4096,
-      temperature: 0.2
+      temperature: 0.1, // Very low for accuracy
+      max_tokens: 16000 // Large output
     });
 
     const response = completion.choices[0].message.content;
+    console.log(`📦 Received response: ${response.length} chars`);
     
+    // Parse JSON
     let questions = [];
     try {
       let clean = response.trim()
@@ -226,131 +257,41 @@ async function extractQuestionsFromImage(base64Image, pageNum, totalPages) {
       const parsed = JSON.parse(clean);
       questions = Array.isArray(parsed) ? parsed : (parsed.questions || []);
     } catch (e) {
+      console.error('JSON parse error, trying fallback...');
       const match = response.match(/\[[\s\S]*\]/);
       if (match) {
         try {
           questions = JSON.parse(match[0]);
         } catch (e2) {
-          console.error('Failed to parse JSON from Vision response');
+          console.error('Fallback parse failed');
         }
       }
     }
 
     const validated = validateQuestions(questions);
-    console.log(`✅ Page ${pageNum}: ${validated.length} questions extracted`);
+    console.log(`✅ Extracted ${validated.length} questions`);
     
     return validated;
     
   } catch (error) {
-    console.error(`❌ Error reading page ${pageNum}:`, error.message);
-    return [];
-  }
-}
-
-async function extractQuestionsWithVision(pdfBuffer, requestId) {
-  try {
-    updateProgress(requestId, 25, 'تحويل PDF إلى صور...');
-    
-    const images = await convertPDFToImages(pdfBuffer, requestId);
-    
-    if (!images || images.length === 0) {
-      console.log('⚠️ Vision not available, falling back to text mode');
-      return null; // Will fallback to text extraction
-    }
-    
-    console.log(`📸 Processing ${images.length} pages with Vision...`);
-    
-    const allQuestions = [];
-    const progressPerPage = 60 / images.length;
-    
-    for (let i = 0; i < images.length; i++) {
-      const progress = 30 + Math.round((i + 1) * progressPerPage);
-      updateProgress(requestId, progress, `قراءة الصفحة ${i + 1}/${images.length}...`);
-      
-      const questions = await extractQuestionsFromImage(images[i], i + 1, images.length);
-      allQuestions.push(...questions);
-      
-      // Small delay to avoid rate limits
-      if (i < images.length - 1) {
-        await new Promise(r => setTimeout(r, 1000));
-      }
-    }
-    
-    console.log(`🎯 Vision extraction: ${allQuestions.length} questions from ${images.length} pages`);
-    return allQuestions;
-    
-  } catch (error) {
-    console.error('Vision extraction failed:', error);
-    return null;
-  }
-}
-
-// ====================================
-// Fallback: Text extraction
-// ====================================
-
-async function extractTextFromPDF(buffer) {
-  try {
-    const data = await pdfParse(buffer);
-    return data.text;
-  } catch (error) {
-    throw new Error('فشل استخراج النص');
-  }
-}
-
-function cleanText(text) {
-  text = text.replace(/تصميم وتطوير.*?\d{10}/gi, '');
-  text = text.replace(/أبو سليم.*?/gi, '');
-  text = text.replace(/\s+/g, ' ');
-  return text.trim();
-}
-
-async function extractQuestionsFromText(text, requestId) {
-  // Simplified text extraction (fallback)
-  updateProgress(requestId, 50, 'استخراج من النص...');
-  
-  const completion = await openai.chat.completions.create({
-    model: OPENAI_MODEL,
-    messages: [
-      {
-        role: 'system',
-        content: 'استخرج أسئلة الاختيار من متعدد من النص.'
-      },
-      {
-        role: 'user',
-        content: `استخرج كل أسئلة MCQ من هذا النص وحولها لـ JSON:\n\n${text.substring(0, 15000)}`
-      }
-    ],
-    temperature: 0.3,
-    max_tokens: 4096
-  });
-
-  const response = completion.choices[0].message.content;
-  
-  try {
-    let clean = response.trim()
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-    
-    const parsed = JSON.parse(clean);
-    const questions = Array.isArray(parsed) ? parsed : (parsed.questions || []);
-    return validateQuestions(questions);
-  } catch (e) {
+    console.error('Error extracting questions:', error);
     return [];
   }
 }
 
 // ====================================
-// Validation
+// Simple Validation - Just basics
 // ====================================
 
 function validateQuestions(questions) {
-  if (!Array.isArray(questions)) return [];
+  if (!Array.isArray(questions)) {
+    console.error('Not an array');
+    return [];
+  }
 
-  return questions.filter(q => {
-    if (!q.question || typeof q.question !== 'string' || q.question.length < 10) {
+  const validated = questions.filter(q => {
+    // Basic checks only
+    if (!q.question || typeof q.question !== 'string' || q.question.trim().length < 5) {
       return false;
     }
     
@@ -362,12 +303,19 @@ function validateQuestions(questions) {
       return false;
     }
     
+    // Clean
     q.question = q.question.trim();
     q.options = q.options.map(o => String(o).trim());
     if (q.chapter) q.chapter = String(q.chapter).trim();
     
     return true;
   });
+
+  if (validated.length !== questions.length) {
+    console.log(`⚠️ Filtered out ${questions.length - validated.length} invalid questions`);
+  }
+
+  return validated;
 }
 
 // ====================================
@@ -377,10 +325,9 @@ function validateQuestions(questions) {
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
-    message: 'Running',
+    message: 'Server running',
     model: OPENAI_MODEL,
-    vision: USE_VISION,
-    version: '4.0-VISION'
+    version: '4.1-SIMPLE'
   });
 });
 
@@ -398,33 +345,34 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 [${reqId}] ${req.file.originalname}`);
-    console.log(`📊 Mode: ${USE_VISION ? 'VISION 👁️' : 'TEXT'}`);
+    console.log(`🚀 V4.1 SIMPLE [${reqId}]`);
+    console.log(`📄 File: ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
     updateProgress(reqId, 10, 'رفع الملف...');
+    await new Promise(r => setTimeout(r, 500));
     
-    let questions = [];
+    updateProgress(reqId, 30, 'استخراج النص من PDF...');
+    const text = await extractTextFromPDF(req.file.buffer);
     
-    // Try Vision first (if enabled)
-    if (USE_VISION) {
-      questions = await extractQuestionsWithVision(req.file.buffer, reqId);
+    if (!text || text.length < 100) {
+      clearProgress(reqId);
+      return res.status(400).json({
+        success: false,
+        error: 'الملف لا يحتوي على نص كافٍ'
+      });
     }
-    
-    // Fallback to text if Vision failed or not available
-    if (!questions || questions.length === 0) {
-      console.log('⚠️ Using text extraction fallback...');
-      updateProgress(reqId, 30, 'استخراج النص...');
-      const text = await extractTextFromPDF(req.file.buffer);
-      const cleaned = cleanText(text);
-      questions = await extractQuestionsFromText(cleaned, reqId);
-    }
+
+    console.log(`📝 Extracted ${text.length} characters`);
+
+    updateProgress(reqId, 50, 'إرسال لـ GPT-4 للقراءة...');
+    const questions = await extractAllQuestions(text, reqId);
 
     if (!questions || questions.length === 0) {
       clearProgress(reqId);
       return res.status(400).json({
         success: false,
-        error: 'لم يتم العثور على أسئلة'
+        error: 'لم يتم العثور على أسئلة في الملف'
       });
     }
 
@@ -437,7 +385,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     console.log(`✅ SUCCESS: ${questions.length} questions in ${time}s`);
     console.log(`${'='.repeat(60)}\n`);
 
-    updateProgress(reqId, 100, 'تم! ✅');
+    updateProgress(reqId, 100, 'تم بنجاح! ✅');
     setTimeout(() => clearProgress(reqId), 5000);
 
     res.json({
@@ -446,17 +394,23 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       totalQuestions: questions.length,
       chapters: chapters,
       questions: questions,
-      processingTime: `${time}s`,
-      method: USE_VISION ? 'vision' : 'text'
+      processingTime: `${time}s`
     });
 
   } catch (error) {
     console.error(`❌ [${reqId}]:`, error);
     clearProgress(reqId);
     
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        success: false,
+        error: `حجم الملف أكبر من ${MAX_PDF_SIZE_MB}MB`
+      });
+    }
+
     res.status(500).json({
       success: false,
-      error: error.message || 'خطأ في المعالجة'
+      error: error.message || 'حدث خطأ أثناء المعالجة'
     });
   }
 });
@@ -466,23 +420,22 @@ app.get('/', (req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
+  console.error('Server error:', err);
   res.status(500).json({ success: false, error: err.message });
 });
 
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 AI Quiz System V4.0 VISION');
+  console.log('🚀 AI Quiz System V4.1 ULTIMATE SIMPLE');
   console.log('='.repeat(60));
   console.log(`📡 Port: ${PORT}`);
   console.log(`🤖 Model: ${OPENAI_MODEL}`);
-  console.log(`👁️ Vision: ${USE_VISION ? 'ENABLED ✅' : 'DISABLED'}`);
-  console.log('✨ Features:');
-  console.log('   - GPT-4 Vision reads PDF as images');
-  console.log('   - Solves encoding issues');
-  console.log('   - Solves garbled text');
-  console.log('   - Extracts ALL questions accurately');
-  console.log('   - Fallback to text if needed');
+  console.log(`📦 Max file: ${MAX_PDF_SIZE_MB}MB`);
+  console.log('✨ Simple approach:');
+  console.log('   - PDF → Raw text');
+  console.log('   - Send all to GPT-4 directly');
+  console.log('   - Extract all questions at once');
+  console.log('   - No complex processing!');
   console.log('='.repeat(60) + '\n');
 });
 
