@@ -1,7 +1,7 @@
 // ====================================
-// AI Quiz System V6.0 CLAUDE TEXT
-// Claude 3.5 Sonnet - The Arabic Master!
-// Smart text understanding - $0.08-0.10 per file
+// AI Quiz System V6.2 GPT-4 SMART
+// Back to what works!
+// $0.12-0.15 per file
 // ====================================
 
 require('dotenv').config();
@@ -9,7 +9,6 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
-const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
@@ -17,17 +16,12 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize AI clients
-const anthropic = new Anthropic({
-  apiKey: process.env.CLAUDE_API_KEY,
-});
-
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-const CLAUDE_MODEL = 'claude-3-5-sonnet-20240620'; // Public version
-const CHUNK_SIZE = 30000; // Optimal for Claude
+const GPT_MODEL = 'gpt-4o';
+const CHUNK_SIZE = 30000;
 const MAX_PDF_SIZE_MB = parseInt(process.env.MAX_PDF_SIZE_MB) || 50;
 const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
 
@@ -150,10 +144,10 @@ function smartSplit(text, chunkSize) {
 }
 
 // ====================================
-// Claude 3.5 Sonnet Extraction
+// GPT-4 Smart Extraction
 // ====================================
 
-const CLAUDE_PROMPT = `أنت خبير في استخراج أسئلة الاختيار من متعدد من النصوص العربية.
+const GPT_PROMPT = `أنت خبير في استخراج أسئلة الاختيار من متعدد من النصوص العربية.
 
 مهمتك:
 1. اقرأ النص بعناية (قد يحتوي على أخطاء من استخراج PDF)
@@ -166,7 +160,7 @@ const CLAUDE_PROMPT = `أنت خبير في استخراج أسئلة الاخت
 "معمليات" → "عمليات"
 "يحن" → "بين"
 
-أخرج JSON object بهذا الشكل بالضبط:
+أخرج JSON object بهذا الشكل فقط:
 {
   "questions": [
     {
@@ -180,75 +174,61 @@ const CLAUDE_PROMPT = `أنت خبير في استخراج أسئلة الاخت
 
 مهم جداً:
 - أخرج JSON فقط
-- لا تضف أي نص قبل أو بعد JSON
 - استخرج كل الأسئلة التي تجدها
 - صحح الأخطاء تلقائياً`;
 
-async function extractWithClaude(chunk, index, total, reqId) {
+async function extractWithGPT4(chunk, index, total, reqId) {
   try {
-    console.log(`🤖 [Claude] Processing chunk ${index + 1}/${total}`);
+    console.log(`🤖 [GPT-4] Processing chunk ${index + 1}/${total}`);
     
-    const message = await anthropic.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 16000,
-      temperature: 0.2,
-      system: CLAUDE_PROMPT,
+    const completion = await openai.chat.completions.create({
+      model: GPT_MODEL,
+      response_format: { type: "json_object" },
       messages: [
+        {
+          role: 'system',
+          content: GPT_PROMPT
+        },
         {
           role: 'user',
           content: `استخرج أسئلة الاختيار من متعدد من هذا النص:\n\n${chunk}`
         }
-      ]
+      ],
+      temperature: 0.2,
+      max_tokens: 16000
     });
     
-    const response = message.content[0].text;
-    console.log(`📥 Claude response length: ${response.length}`);
+    const response = completion.choices[0].message.content;
+    console.log(`📥 GPT-4 response length: ${response.length}`);
     
-    // Parse JSON
     let questions = [];
     try {
-      // Clean response
-      let cleaned = response.trim();
-      
-      // Remove markdown if present
-      if (cleaned.startsWith('```')) {
-        cleaned = cleaned.replace(/```json?\n?/g, '').replace(/```\n?$/g, '');
-      }
-      
-      // Find JSON object
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        questions = parsed.questions || parsed.Questions || [];
-      } else {
-        throw new Error('No JSON found');
-      }
+      const parsed = JSON.parse(response);
+      questions = parsed.questions || parsed.Questions || [];
       
       if (!Array.isArray(questions)) {
         console.warn('⚠️ Questions is not an array');
         questions = [];
       }
-      
     } catch (e) {
       console.error(`❌ JSON parse error:`, e.message);
-      console.log('Response preview:', response.substring(0, 200));
     }
     
     const validated = validateQuestions(questions);
-    console.log(`✅ [Claude] Chunk ${index + 1}: ${validated.length} questions`);
+    console.log(`✅ [GPT-4] Chunk ${index + 1}: ${validated.length} questions`);
     
     return validated;
     
   } catch (error) {
-    console.error(`❌ [Claude] Chunk ${index + 1}:`, error.message);
+    console.error(`❌ [GPT-4] Chunk ${index + 1}:`, error.message);
     return [];
   }
 }
 
-async function extractAllWithClaude(text, reqId) {
+async function extractAllWithGPT4(text, reqId) {
   try {
     const chunks = smartSplit(text, CHUNK_SIZE);
-    updateProgress(reqId, 40, `معالجة ${chunks.length} أجزاء بـ Claude...`);
+    updateProgress(reqId, 40, `معالجة ${chunks.length} أجزاء بـ GPT-4...`);
     
     const PARALLEL_LIMIT = 3;
     const allQuestions = [];
@@ -259,7 +239,7 @@ async function extractAllWithClaude(text, reqId) {
       updateProgress(reqId, progress, `معالجة... (${i + 1}/${chunks.length})`);
       
       const promises = batch.map((chunk, idx) => 
-        extractWithClaude(chunk, i + idx, chunks.length, reqId)
+        extractWithGPT4(chunk, i + idx, chunks.length, reqId)
       );
       
       const results = await Promise.all(promises);
@@ -270,49 +250,11 @@ async function extractAllWithClaude(text, reqId) {
       }
     }
     
-    console.log(`✅ [Claude] Total extracted: ${allQuestions.length} questions`);
+    console.log(`✅ [GPT-4] Total extracted: ${allQuestions.length} questions`);
     return allQuestions;
     
   } catch (error) {
-    console.error('Claude extraction error:', error);
-    throw error;
-  }
-}
-
-// ====================================
-// Fallback: OpenAI/Gemini
-// ====================================
-
-async function extractWithFallback(text, reqId) {
-  try {
-    console.log('⚠️ Using fallback extraction...');
-    updateProgress(reqId, 50, 'استخدام النظام الاحتياطي...');
-    
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: 'system',
-          content: 'استخرج أسئلة الاختيار من متعدد. أخرج JSON object مع key "questions".'
-        },
-        {
-          role: 'user',
-          content: `استخرج الأسئلة:\n\n${text.substring(0, 50000)}`
-        }
-      ],
-      temperature: 0.2,
-      max_tokens: 16000
-    });
-    
-    const response = completion.choices[0].message.content;
-    const parsed = JSON.parse(response);
-    const questions = parsed.questions || [];
-    
-    return validateQuestions(questions);
-    
-  } catch (error) {
-    console.error('❌ Fallback error:', error);
+    console.error('GPT-4 extraction error:', error);
     throw error;
   }
 }
@@ -362,10 +304,9 @@ app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     message: 'Running',
-    model: CLAUDE_MODEL,
-    version: '6.0-CLAUDE-TEXT',
-    claudeAvailable: !!process.env.CLAUDE_API_KEY,
-    fallbackAvailable: !!process.env.OPENAI_API_KEY
+    model: GPT_MODEL,
+    version: '6.2-GPT4-SMART',
+    openaiAvailable: !!process.env.OPENAI_API_KEY
   });
 });
 
@@ -383,7 +324,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 V6.0 CLAUDE TEXT [${reqId}]`);
+    console.log(`🚀 V6.2 GPT-4 SMART [${reqId}]`);
     console.log(`📄 ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
@@ -403,30 +344,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
 
     console.log(`📝 Extracted ${text.length} characters`);
 
-    let questions = [];
-    let modelUsed = 'claude';
-    
-    // Try Claude first
-    if (process.env.CLAUDE_API_KEY) {
-      try {
-        questions = await extractAllWithClaude(text, reqId);
-      } catch (claudeError) {
-        console.error('⚠️ Claude failed:', claudeError.message);
-        
-        // Fallback to OpenAI if available
-        if (process.env.OPENAI_API_KEY) {
-          console.log('🔄 Falling back to OpenAI...');
-          questions = await extractWithFallback(text, reqId);
-          modelUsed = 'openai-fallback';
-        } else {
-          throw claudeError;
-        }
-      }
-    } else {
-      // No Claude key, use fallback
-      questions = await extractWithFallback(text, reqId);
-      modelUsed = 'openai-fallback';
-    }
+    const questions = await extractAllWithGPT4(text, reqId);
 
     if (!questions || questions.length === 0) {
       clearProgress(reqId);
@@ -443,7 +361,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     
     console.log(`${'='.repeat(60)}`);
     console.log(`✅ SUCCESS: ${questions.length} questions in ${time}s`);
-    console.log(`🤖 Model: ${modelUsed}`);
+    console.log(`🤖 Model: GPT-4`);
     console.log(`${'='.repeat(60)}\n`);
 
     updateProgress(reqId, 100, 'تم! ✅');
@@ -456,7 +374,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       chapters: chapters,
       questions: questions,
       processingTime: `${time}s`,
-      model: modelUsed
+      model: 'gpt-4'
     });
 
   } catch (error) {
@@ -488,16 +406,15 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 AI Quiz System V6.0 CLAUDE TEXT');
+  console.log('🚀 AI Quiz System V6.2 GPT-4 SMART');
   console.log('='.repeat(60));
   console.log(`📡 Port: ${PORT}`);
-  console.log(`🤖 Primary: ${CLAUDE_MODEL}`);
-  console.log(`🔄 Backup: ${process.env.OPENAI_API_KEY ? 'OpenAI GPT-4' : 'None'}`);
+  console.log(`🤖 Model: ${GPT_MODEL}`);
   console.log('⭐ Strategy:');
-  console.log('   - Claude 3.5 Sonnet (Arabic Master!)');
-  console.log('   - Smart text understanding');
+  console.log('   - GPT-4 with smart text understanding');
   console.log('   - Auto-correct garbled text');
-  console.log('   - $0.08-0.10 per file');
+  console.log('   - Reliable and proven');
+  console.log('   - $0.12-0.15 per file');
   console.log('='.repeat(60) + '\n');
 });
 
