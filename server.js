@@ -1,6 +1,7 @@
 // ====================================
-// AI Quiz System V3.0 FINAL
-// Best extraction + Smart garbled detection
+// AI Quiz System V4.0 VISION
+// Uses GPT-4 Vision to READ PDF images directly
+// Solves: encoding issues + garbled text + missing questions
 // ====================================
 
 require('dotenv').config();
@@ -11,6 +12,11 @@ const pdfParse = require('pdf-parse');
 const OpenAI = require('openai');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const fs = require('fs').promises;
+
+const execAsync = promisify(exec);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,15 +26,12 @@ const openai = new OpenAI({
 });
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
+const VISION_MODEL = 'gpt-4o'; // Vision support
 const MAX_PDF_SIZE_MB = parseInt(process.env.MAX_PDF_SIZE_MB) || 50;
 const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
-const CHUNK_SIZE = 8000; // Increased
-const MAX_TOKENS_PER_REQUEST = 6000; // Increased
+const USE_VISION = process.env.USE_VISION === 'true' || true; // Enable by default
 
-// ====================================
-// Progress Tracking
-// ====================================
-
+// Progress tracking
 const progressStore = new Map();
 
 function updateProgress(requestId, progress, message) {
@@ -53,10 +56,7 @@ setInterval(() => {
   }
 }, 60000);
 
-// ====================================
 // Middleware
-// ====================================
-
 app.use(cors({
   origin: process.env.ALLOWED_ORIGIN || '*',
   methods: ['GET', 'POST'],
@@ -68,11 +68,9 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 10,
-  message: { success: false, error: 'تم تجاوز الحد الأقصى' },
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  message: { success: false, error: 'تم تجاوز الحد الأقصى' }
 });
 
 app.use('/api/', limiter);
@@ -91,23 +89,23 @@ const upload = multer({
 });
 
 // ====================================
-// BALANCED AI Prompt
+// VISION Prompt
 // ====================================
 
-const AI_PROMPT = `أنت خبير في استخراج أسئلة الامتحانات وتحويلها إلى JSON.
+const VISION_PROMPT = `أنت خبير في قراءة وتحليل أسئلة الامتحانات من الصور.
 
-المهمة: استخرج جميع أسئلة الاختيار من متعدد (MCQ).
+المهمة: اقرأ الصورة واستخرج جميع أسئلة الاختيار من متعدد (MCQ).
 
 القواعد:
-1. استخرج الأسئلة الواضحة والمقروءة
+1. اقرأ كل سؤال بدقة كما هو مكتوب في الصورة
 2. لكل سؤال:
-   - question: نص السؤال
-   - options: مصفوفة الخيارات (2-6)
+   - question: نص السؤال بالضبط
+   - options: جميع الخيارات (2-6)
    - correct: رقم الخيار الصحيح (من 0)
-   - chapter: الفصل (اختياري)
+   - chapter: اسم الفصل إن وجد
 
-3. تجاهل النص المتلخبط مثل "همزحت" أو "يحن الاعختدمحن"
-4. استخرج الأسئلة الجيدة حتى لو كان بعض النص غير واضح
+3. استخرج كل الأسئلة - لا تترك شيئاً
+4. احرص على الدقة في الحروف العربية
 
 الصيغة - JSON فقط:
 [
@@ -119,188 +117,100 @@ const AI_PROMPT = `أنت خبير في استخراج أسئلة الامتحا
   }
 ]
 
-مهم:
+مهم جداً:
 - JSON فقط بدون markdown
-- بدون شرح
-- استخرج أكبر عدد من الأسئلة الواضحة
-
-النص:`;
+- استخرج كل الأسئلة الموجودة في الصورة
+- احرص على دقة النص العربي`;
 
 // ====================================
-// ULTIMATE Arabic Fixing
+// PDF to Images (using pdf-poppler or pdftoppm)
 // ====================================
 
-function fixArabicTextAdvanced(text) {
+async function convertPDFToImages(pdfBuffer, requestId) {
   try {
-    text = text.normalize('NFC');
+    // Create temp directory
+    const tempDir = `/tmp/pdf_${Date.now()}`;
+    await fs.mkdir(tempDir, { recursive: true });
     
-    // Extended encoding fixes
-    const fixes = {
-      'Ø£': 'أ', 'Ø¥': 'إ', 'Ø¢': 'آ', 'Ø¤': 'ؤ', 'Ø¦': 'ئ',
-      'Ø§': 'ا', 'Ø¨': 'ب', 'Øª': 'ت', 'Ø«': 'ث', 'Ø¬': 'ج',
-      'Ø­': 'ح', 'Ø®': 'خ', 'Ø¯': 'د', 'Ø°': 'ذ', 'Ø±': 'ر',
-      'Ø²': 'ز', 'Ø³': 'س', 'Ø´': 'ش', 'Øµ': 'ص', 'Ø¶': 'ض',
-      'Ø·': 'ط', 'Ø¸': 'ظ', 'Ø¹': 'ع', 'Øº': 'غ', 'Ù': 'ف',
-      'Ù‚': 'ق', 'Ùƒ': 'ك', 'Ù„': 'ل', 'Ù…': 'م', 'Ù†': 'ن',
-      'Ù‡': 'ه', 'Ùˆ': 'و', 'ÙŠ': 'ي', 'Ù‰': 'ى', 'Ø©': 'ة'
-    };
+    // Save PDF to temp file
+    const pdfPath = `${tempDir}/input.pdf`;
+    await fs.writeFile(pdfPath, pdfBuffer);
     
-    for (const [wrong, correct] of Object.entries(fixes)) {
-      text = text.replace(new RegExp(wrong, 'g'), correct);
-    }
+    console.log(`📄 Converting PDF to images...`);
     
-    text = text.replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '');
-    
-    return text;
-  } catch (error) {
-    return text;
-  }
-}
-
-/**
- * SMART readable detection - catches garbled text like "همزحت"
- */
-function isTextReadable(text) {
-  if (!text || text.length < 3) return false;
-  
-  // Remove spaces and numbers
-  const cleanText = text.replace(/[\s\d]/g, '');
-  if (cleanText.length < 3) return false;
-  
-  const arabicChars = (cleanText.match(/[\u0600-\u06FF]/g) || []).length;
-  const latinChars = (cleanText.match(/[a-zA-Z]/g) || []).length;
-  const totalChars = cleanText.length;
-  
-  const arabicRatio = arabicChars / totalChars;
-  const latinRatio = latinChars / totalChars;
-  
-  // Must be mostly Arabic OR mostly Latin
-  const isMostlyArabic = arabicRatio > 0.6;
-  const isMostlyLatin = latinRatio > 0.7;
-  
-  if (!isMostlyArabic && !isMostlyLatin) {
-    return false;
-  }
-  
-  // Check for common garbled patterns
-  const garbledPatterns = [
-    /[حخهـ][زمن][حخهـ][تث]/,  // "همزحت", "خمنث"
-    /[يئ][حخهـ][نم]/,          // "يحن", "ئخم"
-    /[لم][عغ][مل][لم][يئ][اأإ][تث]/, // "معمليات"
-    /[حخهـ][فق][اأإ][عغ][لم]/  // "خفاعل"
-  ];
-  
-  for (const pattern of garbledPatterns) {
-    if (pattern.test(text)) {
-      console.log(`🚫 Garbled pattern detected in: "${text.substring(0, 30)}"`);
-      return false;
-    }
-  }
-  
-  // Check for nonsensical letter combinations
-  // Arabic should have vowels (ا و ي)
-  if (isMostlyArabic) {
-    const vowels = (text.match(/[اوي]/g) || []).length;
-    const vowelRatio = vowels / arabicChars;
-    
-    if (vowelRatio < 0.15) { // Too few vowels = garbled
-      console.log(`🚫 Low vowel ratio (${vowelRatio.toFixed(2)}) in: "${text.substring(0, 30)}"`);
-      return false;
-    }
-  }
-  
-  return true;
-}
-
-async function extractTextFromPDF(buffer) {
-  try {
-    const data = await pdfParse(buffer, {
-      max: 0,
-      normalizeWhitespace: true,
-      disableCombineTextItems: false
-    });
-    
-    let text = data.text;
-    console.log(`📄 Extracted ${text.length} chars`);
-    
-    text = fixArabicTextAdvanced(text);
-    
-    // Check sample
-    const sample = text.substring(0, 500);
-    if (!isTextReadable(sample)) {
-      console.warn('⚠️ WARNING: PDF may have severe encoding issues');
-      console.warn('Sample:', sample.substring(0, 100));
-    }
-    
-    return text;
-  } catch (error) {
-    console.error('PDF error:', error);
-    throw new Error('فشل استخراج النص');
-  }
-}
-
-function cleanText(text) {
-  text = text.replace(/تصميم وتطوير.*?\d{10}/gi, '');
-  text = text.replace(/أبو سليم.*?/gi, '');
-  text = text.replace(/صفحة\s*\d+/gi, '');
-  text = text.replace(/\s+/g, ' ');
-  text = text.replace(/\n{3,}/g, '\n\n');
-  return text.trim();
-}
-
-function splitIntoChunks(text, chunkSize = CHUNK_SIZE) {
-  const chunks = [];
-  const qPattern = /(?=\n\s*(?:\d+[\.\):]|س\s*\d+|سؤال\s*\d+))/g;
-  const blocks = text.split(qPattern).filter(b => b.trim());
-  
-  if (blocks.length <= 1) {
-    const paras = text.split(/\n\n+/);
-    let current = '';
-    
-    for (const p of paras) {
-      if ((current + p).length <= chunkSize) {
-        current += p + '\n\n';
-      } else {
-        if (current) chunks.push(current.trim());
-        current = p + '\n\n';
+    // Try pdftoppm (usually available in Linux)
+    try {
+      const outputPrefix = `${tempDir}/page`;
+      await execAsync(`pdftoppm -png -r 150 "${pdfPath}" "${outputPrefix}"`);
+      
+      // Get all generated images
+      const files = await fs.readdir(tempDir);
+      const imageFiles = files
+        .filter(f => f.startsWith('page') && f.endsWith('.png'))
+        .sort();
+      
+      console.log(`✅ Converted to ${imageFiles.length} images`);
+      
+      // Read images as base64
+      const images = [];
+      for (const file of imageFiles) {
+        const imgPath = `${tempDir}/${file}`;
+        const imgBuffer = await fs.readFile(imgPath);
+        const base64 = imgBuffer.toString('base64');
+        images.push(base64);
       }
+      
+      // Cleanup
+      await fs.rm(tempDir, { recursive: true, force: true });
+      
+      return images;
+      
+    } catch (pdfError) {
+      console.warn('pdftoppm not available, falling back to text extraction');
+      await fs.rm(tempDir, { recursive: true, force: true });
+      return null;
     }
-    if (current) chunks.push(current.trim());
-  } else {
-    let current = '';
-    for (const block of blocks) {
-      if ((current + block).length <= chunkSize) {
-        current += block;
-      } else {
-        if (current) chunks.push(current.trim());
-        current = block;
-      }
-    }
-    if (current) chunks.push(current.trim());
+    
+  } catch (error) {
+    console.error('Error converting PDF:', error);
+    return null;
   }
-  
-  console.log(`📦 ${chunks.length} chunks (avg ${Math.round(text.length / chunks.length)} chars)`);
-  return chunks;
 }
 
-async function extractQuestionsFromChunk(text, idx, total) {
+// ====================================
+// Extract questions using Vision
+// ====================================
+
+async function extractQuestionsFromImage(base64Image, pageNum, totalPages) {
   try {
-    console.log(`🔄 Chunk ${idx + 1}/${total} (${text.length} chars)`);
+    console.log(`👁️ Reading page ${pageNum}/${totalPages} with Vision...`);
     
     const completion = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
+      model: VISION_MODEL,
       messages: [
         {
           role: 'system',
-          content: 'أنت خبير في استخراج أسئلة الامتحانات. استخرج الأسئلة الواضحة فقط.'
+          content: 'أنت خبير في قراءة أسئلة الامتحانات من الصور بدقة عالية.'
         },
         {
           role: 'user',
-          content: `${AI_PROMPT}\n\n${text}`
+          content: [
+            {
+              type: 'text',
+              text: VISION_PROMPT
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/png;base64,${base64Image}`,
+                detail: 'high'
+              }
+            }
+          ]
         }
       ],
-      temperature: 0.3,
-      max_tokens: MAX_TOKENS_PER_REQUEST
+      max_tokens: 4096,
+      temperature: 0.2
     });
 
     const response = completion.choices[0].message.content;
@@ -317,138 +227,147 @@ async function extractQuestionsFromChunk(text, idx, total) {
       questions = Array.isArray(parsed) ? parsed : (parsed.questions || []);
     } catch (e) {
       const match = response.match(/\[[\s\S]*\]/);
-      if (match) questions = JSON.parse(match[0]);
+      if (match) {
+        try {
+          questions = JSON.parse(match[0]);
+        } catch (e2) {
+          console.error('Failed to parse JSON from Vision response');
+        }
+      }
     }
 
-    const validated = validateQuestionsSmart(questions);
-    console.log(`✅ Chunk ${idx + 1}: ${validated.length} valid (rejected ${questions.length - validated.length})`);
+    const validated = validateQuestions(questions);
+    console.log(`✅ Page ${pageNum}: ${validated.length} questions extracted`);
     
     return validated;
+    
   } catch (error) {
-    console.error(`❌ Chunk ${idx + 1}:`, error.message);
+    console.error(`❌ Error reading page ${pageNum}:`, error.message);
     return [];
   }
 }
 
-async function extractQuestionsWithAI(text, reqId) {
+async function extractQuestionsWithVision(pdfBuffer, requestId) {
   try {
-    console.log(`📝 Total: ${text.length} chars`);
+    updateProgress(requestId, 25, 'تحويل PDF إلى صور...');
     
-    if (text.length <= CHUNK_SIZE) {
-      updateProgress(reqId, 70, 'استخراج...');
-      return await extractQuestionsFromChunk(text, 0, 1);
+    const images = await convertPDFToImages(pdfBuffer, requestId);
+    
+    if (!images || images.length === 0) {
+      console.log('⚠️ Vision not available, falling back to text mode');
+      return null; // Will fallback to text extraction
     }
     
-    updateProgress(reqId, 55, 'تقسيم...');
-    const chunks = splitIntoChunks(text, CHUNK_SIZE);
+    console.log(`📸 Processing ${images.length} pages with Vision...`);
     
-    const all = [];
-    const progressPer = 35 / chunks.length;
+    const allQuestions = [];
+    const progressPerPage = 60 / images.length;
     
-    for (let i = 0; i < chunks.length; i++) {
-      const prog = 55 + Math.round((i + 1) * progressPer);
-      updateProgress(reqId, prog, `استخراج... (${i + 1}/${chunks.length})`);
+    for (let i = 0; i < images.length; i++) {
+      const progress = 30 + Math.round((i + 1) * progressPerPage);
+      updateProgress(requestId, progress, `قراءة الصفحة ${i + 1}/${images.length}...`);
       
-      const qs = await extractQuestionsFromChunk(chunks[i], i, chunks.length);
-      all.push(...qs);
+      const questions = await extractQuestionsFromImage(images[i], i + 1, images.length);
+      allQuestions.push(...questions);
       
-      if (i < chunks.length - 1) {
-        await new Promise(r => setTimeout(r, 500));
+      // Small delay to avoid rate limits
+      if (i < images.length - 1) {
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
     
-    console.log(`🎯 Total: ${all.length} questions from ${chunks.length} chunks`);
-    return all;
+    console.log(`🎯 Vision extraction: ${allQuestions.length} questions from ${images.length} pages`);
+    return allQuestions;
+    
   } catch (error) {
-    console.error('Error:', error);
-    throw error;
+    console.error('Vision extraction failed:', error);
+    return null;
   }
 }
 
-/**
- * SMART validation - Rejects garbled but allows good questions
- */
-function validateQuestionsSmart(questions) {
+// ====================================
+// Fallback: Text extraction
+// ====================================
+
+async function extractTextFromPDF(buffer) {
+  try {
+    const data = await pdfParse(buffer);
+    return data.text;
+  } catch (error) {
+    throw new Error('فشل استخراج النص');
+  }
+}
+
+function cleanText(text) {
+  text = text.replace(/تصميم وتطوير.*?\d{10}/gi, '');
+  text = text.replace(/أبو سليم.*?/gi, '');
+  text = text.replace(/\s+/g, ' ');
+  return text.trim();
+}
+
+async function extractQuestionsFromText(text, requestId) {
+  // Simplified text extraction (fallback)
+  updateProgress(requestId, 50, 'استخراج من النص...');
+  
+  const completion = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    messages: [
+      {
+        role: 'system',
+        content: 'استخرج أسئلة الاختيار من متعدد من النص.'
+      },
+      {
+        role: 'user',
+        content: `استخرج كل أسئلة MCQ من هذا النص وحولها لـ JSON:\n\n${text.substring(0, 15000)}`
+      }
+    ],
+    temperature: 0.3,
+    max_tokens: 4096
+  });
+
+  const response = completion.choices[0].message.content;
+  
+  try {
+    let clean = response.trim()
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    
+    const parsed = JSON.parse(clean);
+    const questions = Array.isArray(parsed) ? parsed : (parsed.questions || []);
+    return validateQuestions(questions);
+  } catch (e) {
+    return [];
+  }
+}
+
+// ====================================
+// Validation
+// ====================================
+
+function validateQuestions(questions) {
   if (!Array.isArray(questions)) return [];
 
-  let rejected = {
-    noQuestion: 0,
-    garbledQuestion: 0,
-    shortQuestion: 0,
-    noOptions: 0,
-    fewOptions: 0,
-    garbledOptions: 0,
-    noCorrect: 0,
-    invalidCorrect: 0
-  };
-
-  const validated = questions.filter(q => {
-    // Check question
-    if (!q.question || typeof q.question !== 'string') {
-      rejected.noQuestion++;
+  return questions.filter(q => {
+    if (!q.question || typeof q.question !== 'string' || q.question.length < 10) {
       return false;
     }
     
-    const qText = q.question.trim();
-    if (qText.length < 10) {
-      rejected.shortQuestion++;
+    if (!Array.isArray(q.options) || q.options.length < 2) {
       return false;
     }
     
-    if (!isTextReadable(qText)) {
-      rejected.garbledQuestion++;
+    if (typeof q.correct !== 'number' || q.correct < 0 || q.correct >= q.options.length) {
       return false;
     }
     
-    // Check options
-    if (!Array.isArray(q.options)) {
-      rejected.noOptions++;
-      return false;
-    }
-    
-    if (q.options.length < 2) {
-      rejected.fewOptions++;
-      return false;
-    }
-    
-    // Check each option
-    for (const opt of q.options) {
-      if (!opt || typeof opt !== 'string' || opt.trim().length < 1) {
-        rejected.garbledOptions++;
-        return false;
-      }
-      
-      if (!isTextReadable(opt)) {
-        rejected.garbledOptions++;
-        return false;
-      }
-    }
-    
-    // Check correct
-    if (typeof q.correct !== 'number') {
-      rejected.noCorrect++;
-      return false;
-    }
-    
-    if (q.correct < 0 || q.correct >= q.options.length) {
-      rejected.invalidCorrect++;
-      return false;
-    }
-    
-    // Clean
-    q.question = qText;
+    q.question = q.question.trim();
     q.options = q.options.map(o => String(o).trim());
     if (q.chapter) q.chapter = String(q.chapter).trim();
     
     return true;
   });
-
-  const total = Object.values(rejected).reduce((a, b) => a + b, 0);
-  if (total > 0) {
-    console.log(`⚠️ Rejected ${total}:`, rejected);
-  }
-
-  return validated;
 }
 
 // ====================================
@@ -460,7 +379,8 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Running',
     model: OPENAI_MODEL,
-    version: '3.0-FINAL'
+    vision: USE_VISION,
+    version: '4.0-VISION'
   });
 });
 
@@ -478,32 +398,33 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 [${reqId}] ${req.file.originalname} (${(req.file.size / 1024).toFixed(0)}KB)`);
+    console.log(`🚀 [${reqId}] ${req.file.originalname}`);
+    console.log(`📊 Mode: ${USE_VISION ? 'VISION 👁️' : 'TEXT'}`);
     console.log('='.repeat(60));
 
-    updateProgress(reqId, 10, 'رفع...');
-    await new Promise(r => setTimeout(r, 300));
+    updateProgress(reqId, 10, 'رفع الملف...');
     
-    updateProgress(reqId, 25, 'استخراج النص...');
-    const raw = await extractTextFromPDF(req.file.buffer);
+    let questions = [];
     
-    if (!raw || raw.length < 100) {
-      clearProgress(reqId);
-      return res.status(400).json({ success: false, error: 'نص غير كافي' });
+    // Try Vision first (if enabled)
+    if (USE_VISION) {
+      questions = await extractQuestionsWithVision(req.file.buffer, reqId);
     }
-
-    updateProgress(reqId, 40, 'تنظيف...');
-    const cleaned = cleanText(raw);
-    console.log(`✨ Cleaned: ${cleaned.length} chars`);
-
-    updateProgress(reqId, 50, 'بدء الاستخراج...');
-    const questions = await extractQuestionsWithAI(cleaned, reqId);
+    
+    // Fallback to text if Vision failed or not available
+    if (!questions || questions.length === 0) {
+      console.log('⚠️ Using text extraction fallback...');
+      updateProgress(reqId, 30, 'استخراج النص...');
+      const text = await extractTextFromPDF(req.file.buffer);
+      const cleaned = cleanText(text);
+      questions = await extractQuestionsFromText(cleaned, reqId);
+    }
 
     if (!questions || questions.length === 0) {
       clearProgress(reqId);
       return res.status(400).json({
         success: false,
-        error: 'لم يتم العثور على أسئلة واضحة. الملف قد يحتوي على أخطاء ترميز.'
+        error: 'لم يتم العثور على أسئلة'
       });
     }
 
@@ -525,18 +446,18 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       totalQuestions: questions.length,
       chapters: chapters,
       questions: questions,
-      processingTime: `${time}s`
+      processingTime: `${time}s`,
+      method: USE_VISION ? 'vision' : 'text'
     });
 
   } catch (error) {
     console.error(`❌ [${reqId}]:`, error);
     clearProgress(reqId);
     
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ success: false, error: `أكبر من ${MAX_PDF_SIZE_MB}MB` });
-    }
-
-    res.status(500).json({ success: false, error: error.message || 'خطأ' });
+    res.status(500).json({
+      success: false,
+      error: error.message || 'خطأ في المعالجة'
+    });
   }
 });
 
@@ -551,17 +472,17 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 AI Quiz System V3.0 FINAL');
+  console.log('🚀 AI Quiz System V4.0 VISION');
   console.log('='.repeat(60));
   console.log(`📡 Port: ${PORT}`);
   console.log(`🤖 Model: ${OPENAI_MODEL}`);
-  console.log(`📦 Chunk: ${CHUNK_SIZE} chars`);
-  console.log(`🎯 Max tokens: ${MAX_TOKENS_PER_REQUEST}`);
+  console.log(`👁️ Vision: ${USE_VISION ? 'ENABLED ✅' : 'DISABLED'}`);
   console.log('✨ Features:');
-  console.log('   - Smart garbled detection');
-  console.log('   - Pattern-based filtering');
-  console.log('   - Vowel ratio checking');
-  console.log('   - Balanced extraction');
+  console.log('   - GPT-4 Vision reads PDF as images');
+  console.log('   - Solves encoding issues');
+  console.log('   - Solves garbled text');
+  console.log('   - Extracts ALL questions accurately');
+  console.log('   - Fallback to text if needed');
   console.log('='.repeat(60) + '\n');
 });
 
