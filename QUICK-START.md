@@ -1,121 +1,120 @@
-# ⚡ دليل البدء السريع - Railway
+# ⚡ دليل البدء السريع - 5 دقائق
 
-## 🚀 نشر في 5 دقائق!
+## 📥 **الملفات المطلوبة:**
 
-### 1. ثبّت Railway CLI
+1. **[server-v2.js](computer:///mnt/user-data/outputs/server-v2.js)** ← Backend الجديد
+2. **[index-v2.html](computer:///mnt/user-data/outputs/index-v2.html)** ← Frontend الجديد  
+3. **[.env.example](computer:///mnt/user-data/outputs/.env.example)** ← إعدادات الموديل
 
-**Windows:**
-```powershell
-iwr https://railway.app/install.ps1 | iex
+---
+
+## 🚀 **3 خطوات فقط:**
+
+### **1️⃣ تغيير الموديل (1 دقيقة)**
+
 ```
-
-**macOS:**
-```bash
-brew install railway
-```
-
-**Linux:**
-```bash
-npm i -g @railway/cli
+Railway → Variables → OPENAI_MODEL
+غيّر من: gpt-4o-mini
+إلى:      gpt-4o
+✅ Save
 ```
 
 ---
 
-### 2. سجّل الدخول
-```bash
-railway login
+### **2️⃣ تحديث Backend (2 دقيقة)**
+
+```
+GitHub → server.js → Edit
+- احذف كل شي (Ctrl+A, Delete)
+- انسخ محتوى server-v2.js
+- الصق (Ctrl+V)
+- Commit: "Update to V2 with GPT-4o"
 ```
 
 ---
 
-### 3. أعد المشروع
-```bash
-cd ai-quiz-system
-git init
-git add .
-git commit -m "Initial commit"
+### **3️⃣ تحديث Frontend (2 دقيقة)**
+
+```
+GitHub → index.html → Edit
+- احذف كل شي
+- انسخ محتوى index-v2.html
+- الصق
+- Commit: "Update UI to V2"
 ```
 
 ---
 
-### 4. انشر!
-```bash
-railway init
-railway up
+## ✅ **انتهيت!**
+
+**Railway راح يعمل Auto-deploy خلال 1-2 دقيقة**
+
+---
+
+## 🧪 **اختبار:**
+
+```
+https://ai-quiz-system-production.up.railway.app
+```
+
+**المتوقع:**
+- ✅ "V2.0 ✨" في الهيدر
+- ✅ Progress bar عند رفع ملف
+- ✅ دعم ملفات كبيرة (100+ سؤال)
+- ✅ حروف عربية صحيحة
+
+---
+
+## 📊 **ما الجديد؟**
+
+```
+✅ الموديل: gpt-4o (أذكى 10x)
+✅ Progress Bar (تتبع حي)
+✅ Chunking (ملفات كبيرة)
+✅ Arabic Fixing (حروف صحيحة)
+✅ Mobile UX (محسّن)
 ```
 
 ---
 
-### 5. أضف OpenAI Key
-```bash
-railway variables set OPENAI_API_KEY=sk-proj-your-key
-railway variables set OPENAI_MODEL=gpt-4o-mini
-railway variables set ALLOWED_ORIGIN=https://aldosari.net
+## 💰 **التكلفة:**
+
+```
+الموديل القديم: $0.001 / ملف
+الموديل الجديد:  $0.015 / ملف
+
+مثال: 50 ملف/شهر = $0.75
+(يستاهل للجودة!)
 ```
 
 ---
 
-### 6. اربط الدومين
+## 🐛 **مشكلة؟**
 
-**في Railway Dashboard:**
-1. Settings → Domains → Custom Domain
-2. أدخل: `aldosari.net`
-3. انسخ الـ Railway domain (مثل: `xxx.up.railway.app`)
+**1. الموقع ما يفتح:**
+```
+Railway → Logs → شوف الأخطاء
+```
 
-**في name.com:**
-1. Manage DNS → Add Record
-2. Type: `CNAME`, Host: `@`, Answer: `xxx.up.railway.app`
-3. Type: `CNAME`, Host: `www`, Answer: `xxx.up.railway.app`
+**2. الموديل ما اتغير:**
+```
+Railway → Redeploy
+```
 
----
-
-### 7. انتظر وافتح!
-
-⏱️ انتظر 5-15 دقيقة
-
-ثم افتح: **https://aldosari.net**
-
----
-
-## ✅ انتهيت!
-
-### أوامر مفيدة:
-
-```bash
-# عرض Logs
-railway logs
-
-# إعادة التشغيل
-railway restart
-
-# تحديث
-railway up
-
-# فتح Dashboard
-railway open
+**3. Progress Bar ما يشتغل:**
+```
+امسح Cache: Ctrl+Shift+R
 ```
 
 ---
 
-## 🆘 مشاكل؟
+## 🎯 **للمزيد:**
 
-**الموقع لا يفتح:**
-```bash
-railway logs
-railway restart
-```
-
-**الدومين لا يعمل:**
-- تحقق من DNS في name.com
-- انتظر حتى ساعة للتحديث
-- امسح DNS cache: `ipconfig /flushdns`
-
-**OpenAI لا يعمل:**
-```bash
-railway variables
-railway variables set OPENAI_API_KEY=sk-proj-new-key
-```
+- **الدليل الشامل:** DEPLOYMENT-GUIDE.md
+- **شرح التحديثات:** UPDATE-GUIDE.md
 
 ---
 
-**راجع الدليل الكامل في:** `RAILWAY-DEPLOYMENT-GUIDE.md`
+**يلا ابدأ الآن! 🚀**
+
+_كل خطوة تاخذ دقيقة واحدة_
