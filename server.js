@@ -1,6 +1,6 @@
 // ====================================
-// AI Quiz System V4.2 OPTIMIZED
-// Faster + Handles corrupted files
+// AI Quiz System V4.3 REWRITE
+// Forces GPT-4 to REWRITE, not copy!
 // ====================================
 
 require('dotenv').config();
@@ -22,7 +22,7 @@ const openai = new OpenAI({
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const MAX_PDF_SIZE_MB = parseInt(process.env.MAX_PDF_SIZE_MB) || 50;
 const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
-const CHUNK_SIZE = 50000; // Optimized chunk size
+const CHUNK_SIZE = 50000;
 
 // Progress tracking
 const progressStore = new Map();
@@ -82,54 +82,51 @@ const upload = multer({
 });
 
 // ====================================
-// Enhanced Prompts
+// REWRITE Prompt - Forces GPT-4 to rewrite
 // ====================================
 
-const EXTRACT_PROMPT = `أنت خبير في استخراج أسئلة الامتحانات من النصوص.
+const REWRITE_PROMPT = `أنت خبير في قراءة وإعادة كتابة أسئلة الامتحانات بالعربية الفصحى الصحيحة.
 
-المهمة: استخرج جميع أسئلة الاختيار من متعدد (MCQ) من النص التالي.
-
-القواعد:
-1. استخرج كل الأسئلة بالضبط كما هي
-2. لكل سؤال: question, options (array), correct (number from 0), chapter (optional)
-3. JSON Array فقط، بدون markdown أو تعليقات
-
-مثال:
-[
-  {
-    "chapter": "الفصل الأول",
-    "question": "ما هو تعريف البرمجيات؟",
-    "options": ["التعليمات", "الأجهزة", "الشبكات", "قواعد البيانات"],
-    "correct": 0
-  }
-]
-
-النص:`;
-
-const FIX_AND_EXTRACT_PROMPT = `أنت خبير في قراءة النصوص المعطوبة وإصلاحها ثم استخراج الأسئلة.
-
-النص التالي قد يحتوي على أخطاء ترميز أو حروف متلخبطة.
+⚠️ تحذير مهم جداً: النص التالي قد يحتوي على أخطاء ترميز وحروف متلخبطة!
 
 المهمة:
 1. اقرأ النص بعناية
-2. إذا وجدت حروفاً متلخبطة، حاول فهم المعنى وإصلاحها
-3. استخرج جميع أسئلة الاختيار من متعدد
-4. أعد كتابة كل سؤال بالعربية الصحيحة
+2. حدد جميع أسئلة الاختيار من متعدد
+3. ⚠️ لا تنسخ النص كما هو! 
+4. أعد كتابة كل سؤال بالعربية الفصحى الصحيحة
+5. أعد كتابة كل خيار بالعربية الصحيحة
 
-مثلاً:
-- "همزحت" ← قد تعني "هندسة"
-- "معمليات" ← قد تعني "عمليات"
-- "يحن" ← قد تعني "بين"
+أمثلة على التصحيح:
+- "همزحت" → "هندسة"
+- "لعمليات معالجت" → "لعمليات معالجة"
+- "البياهات" → "البيانات"
+- "يحن" → "بين"
+- "الاعختدمحن" → "المستخدمين"
+- "للخفاعلات" → "للتفاعلات"
+- "لخفضي" → "لتخفيض"
 
-أخرج JSON Array فقط:
+القواعد الصارمة:
+1. ممنوع نسخ النص المتلخبط!
+2. يجب إعادة كتابة كل شيء بعربية صحيحة
+3. إذا لم تفهم كلمة، حاول استنتاج المعنى من السياق
+4. اكتب الأسئلة والخيارات بوضوح وبدون أخطاء
+
+الصيغة - JSON Array:
 [
   {
-    "chapter": "...",
-    "question": "...",
-    "options": ["...", "...", "...", "..."],
+    "chapter": "اسم الفصل (بعربية صحيحة)",
+    "question": "نص السؤال بعربية فصحى صحيحة تماماً",
+    "options": [
+      "الخيار الأول بعربية صحيحة",
+      "الخيار الثاني بعربية صحيحة",
+      "الخيار الثالث بعربية صحيحة",
+      "الخيار الرابع بعربية صحيحة"
+    ],
     "correct": 0
   }
 ]
+
+تذكر: أعد الكتابة، لا تنسخ!
 
 النص:`;
 
@@ -145,37 +142,6 @@ async function extractTextFromPDF(buffer) {
     console.error('PDF extraction error:', error);
     throw new Error('فشل استخراج النص من PDF');
   }
-}
-
-// ====================================
-// Smart Text Analysis
-// ====================================
-
-function analyzeTextQuality(text) {
-  const sample = text.substring(0, Math.min(1000, text.length));
-  
-  const arabicChars = (sample.match(/[\u0600-\u06FF]/g) || []).length;
-  const totalChars = sample.replace(/[\s\d]/g, '').length;
-  const arabicRatio = totalChars > 0 ? arabicChars / totalChars : 0;
-  
-  // Check for garbled patterns
-  const garbledPatterns = [
-    /[حخهـ][زمن][حخهـ][تث]/g,
-    /[يئ][حخهـ][نم]/g,
-    /[لم][عغ][مل][لم][يئ][اأإ][تث]/g
-  ];
-  
-  let garbledCount = 0;
-  for (const pattern of garbledPatterns) {
-    const matches = sample.match(pattern);
-    if (matches) garbledCount += matches.length;
-  }
-  
-  const isCorrupted = arabicRatio < 0.5 || garbledCount > 3;
-  
-  console.log(`📊 Text quality: arabicRatio=${arabicRatio.toFixed(2)}, garbled=${garbledCount}, corrupted=${isCorrupted}`);
-  
-  return { arabicRatio, garbledCount, isCorrupted };
 }
 
 // ====================================
@@ -199,41 +165,36 @@ function smartSplit(text, chunkSize) {
     }
     if (current) chunks.push(current.trim());
   } else {
-    // Simple split
     for (let i = 0; i < text.length; i += chunkSize) {
       chunks.push(text.substring(i, i + chunkSize));
     }
   }
   
-  console.log(`📦 Split into ${chunks.length} chunks (avg ${Math.round(text.length / chunks.length)} chars)`);
+  console.log(`📦 Split into ${chunks.length} chunks`);
   return chunks;
 }
 
 // ====================================
-// Parallel Extraction
+// Extract with REWRITE
 // ====================================
 
-async function extractQuestionsFromChunk(text, index, total, isCorrupted) {
+async function extractAndRewrite(text, index, total) {
   try {
-    const prompt = isCorrupted ? FIX_AND_EXTRACT_PROMPT : EXTRACT_PROMPT;
-    
-    console.log(`🔄 Processing chunk ${index + 1}/${total} ${isCorrupted ? '(corrupted mode)' : ''}`);
+    console.log(`🔄 Processing chunk ${index + 1}/${total} with REWRITE mode`);
     
     const completion = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       messages: [
         {
           role: 'system',
-          content: isCorrupted 
-            ? 'أنت خبير في قراءة النصوص المعطوبة وإصلاحها واستخراج الأسئلة منها.'
-            : 'أنت خبير في استخراج أسئلة الامتحانات بدقة عالية.'
+          content: 'أنت خبير في قراءة النصوص المعطوبة وإعادة كتابتها بالعربية الفصحى الصحيحة. لا تنسخ النص المتلخبط - أعد الكتابة دائماً!'
         },
         {
           role: 'user',
-          content: `${prompt}\n\n${text}`
+          content: `${REWRITE_PROMPT}\n\n${text}`
         }
       ],
-      temperature: isCorrupted ? 0.3 : 0.1, // Higher temp for corrupted text
+      temperature: 0.4, // Higher for creativity in rewriting
       max_tokens: 16000
     });
 
@@ -260,10 +221,11 @@ async function extractQuestionsFromChunk(text, index, total, isCorrupted) {
       }
     }
 
-    const validated = validateQuestions(questions);
-    console.log(`✅ Chunk ${index + 1}: ${validated.length} questions`);
+    // CRITICAL: Check if questions are still garbled
+    const validated = validateAndCheckQuality(questions);
+    console.log(`✅ Chunk ${index + 1}: ${validated.valid.length} valid, ${validated.rejected} rejected (garbled)`);
     
-    return validated;
+    return validated.valid;
     
   } catch (error) {
     console.error(`❌ Chunk ${index + 1}:`, error.message);
@@ -271,28 +233,27 @@ async function extractQuestionsFromChunk(text, index, total, isCorrupted) {
   }
 }
 
-async function extractAllQuestionsParallel(text, requestId, isCorrupted) {
+async function extractAllQuestionsParallel(text, requestId) {
   try {
     const chunks = smartSplit(text, CHUNK_SIZE);
     
     if (chunks.length === 1) {
-      updateProgress(requestId, 60, 'استخراج الأسئلة...');
-      return await extractQuestionsFromChunk(chunks[0], 0, 1, isCorrupted);
+      updateProgress(requestId, 60, 'إعادة كتابة الأسئلة...');
+      return await extractAndRewrite(chunks[0], 0, 1);
     }
     
     updateProgress(requestId, 50, `معالجة ${chunks.length} أجزاء...`);
     
-    // Process 3 chunks in parallel for speed
     const PARALLEL_LIMIT = 3;
     const allQuestions = [];
     
     for (let i = 0; i < chunks.length; i += PARALLEL_LIMIT) {
       const batch = chunks.slice(i, i + PARALLEL_LIMIT);
       const progress = 50 + Math.round((i / chunks.length) * 40);
-      updateProgress(requestId, progress, `معالجة... (${i + 1}-${Math.min(i + PARALLEL_LIMIT, chunks.length)}/${chunks.length})`);
+      updateProgress(requestId, progress, `إعادة كتابة... (${i + 1}-${Math.min(i + PARALLEL_LIMIT, chunks.length)}/${chunks.length})`);
       
       const promises = batch.map((chunk, idx) => 
-        extractQuestionsFromChunk(chunk, i + idx, chunks.length, isCorrupted)
+        extractAndRewrite(chunk, i + idx, chunks.length)
       );
       
       const results = await Promise.all(promises);
@@ -313,31 +274,105 @@ async function extractAllQuestionsParallel(text, requestId, isCorrupted) {
 }
 
 // ====================================
-// Validation
+// Enhanced Validation - Checks for garbled text
 // ====================================
 
-function validateQuestions(questions) {
-  if (!Array.isArray(questions)) return [];
+function isTextGarbled(text) {
+  if (!text || text.length < 3) return true;
+  
+  const cleanText = text.replace(/[\s\d]/g, '');
+  if (cleanText.length < 3) return false;
+  
+  const arabicChars = (cleanText.match(/[\u0600-\u06FF]/g) || []).length;
+  const totalChars = cleanText.length;
+  const arabicRatio = arabicChars / totalChars;
+  
+  // Must be mostly Arabic
+  if (arabicRatio < 0.7) {
+    console.log(`⚠️ Low Arabic ratio (${arabicRatio.toFixed(2)}) in: "${text.substring(0, 30)}"`);
+    return true;
+  }
+  
+  // Check for garbled patterns that GPT-4 should have fixed
+  const garbledPatterns = [
+    /[حخهـ][زمن][حخهـ][تث]/,
+    /[يئ][حخهـ][نم]/,
+    /[لم][عغ][مل][لم][يئ][اأإ][تث]/,
+    /[اأإ][عغ][خح][تث][دذ][مل][حخ][نم]/
+  ];
+  
+  for (const pattern of garbledPatterns) {
+    if (pattern.test(text)) {
+      console.log(`⚠️ Garbled pattern in: "${text.substring(0, 30)}"`);
+      return true;
+    }
+  }
+  
+  // Check for low vowel ratio
+  const vowels = (text.match(/[اوي]/g) || []).length;
+  const vowelRatio = arabicChars > 0 ? vowels / arabicChars : 0;
+  
+  if (vowelRatio < 0.15) {
+    console.log(`⚠️ Low vowel ratio (${vowelRatio.toFixed(2)}) in: "${text.substring(0, 30)}"`);
+    return true;
+  }
+  
+  return false;
+}
 
-  return questions.filter(q => {
+function validateAndCheckQuality(questions) {
+  if (!Array.isArray(questions)) {
+    return { valid: [], rejected: 0 };
+  }
+
+  let rejected = 0;
+  const valid = questions.filter(q => {
+    // Basic structure check
     if (!q.question || typeof q.question !== 'string' || q.question.trim().length < 5) {
+      rejected++;
       return false;
     }
     
     if (!Array.isArray(q.options) || q.options.length < 2) {
+      rejected++;
       return false;
     }
     
     if (typeof q.correct !== 'number' || q.correct < 0 || q.correct >= q.options.length) {
+      rejected++;
       return false;
     }
     
+    // CRITICAL: Check if question is still garbled
+    if (isTextGarbled(q.question)) {
+      console.log(`🚫 Rejected garbled question: "${q.question.substring(0, 50)}"`);
+      rejected++;
+      return false;
+    }
+    
+    // Check each option
+    for (const opt of q.options) {
+      if (!opt || typeof opt !== 'string' || opt.trim().length < 1) {
+        rejected++;
+        return false;
+      }
+      
+      if (isTextGarbled(opt)) {
+        console.log(`🚫 Rejected question with garbled option: "${opt.substring(0, 30)}"`);
+        rejected++;
+        return false;
+      }
+    }
+    
+    // Clean
     q.question = q.question.trim();
     q.options = q.options.map(o => String(o).trim());
     if (q.chapter) q.chapter = String(q.chapter).trim();
     
     return true;
   });
+
+  return { valid, rejected };
 }
 
 // ====================================
@@ -349,7 +384,7 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Running',
     model: OPENAI_MODEL,
-    version: '4.2-OPTIMIZED'
+    version: '4.3-REWRITE'
   });
 });
 
@@ -367,7 +402,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 V4.2 OPTIMIZED [${reqId}]`);
+    console.log(`🚀 V4.3 REWRITE [${reqId}]`);
     console.log(`📄 ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
@@ -387,19 +422,14 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
 
     console.log(`📝 Extracted ${text.length} characters`);
 
-    updateProgress(reqId, 40, 'تحليل النص...');
-    const quality = analyzeTextQuality(text);
-
-    updateProgress(reqId, 50, quality.isCorrupted ? 'معالجة ملف معطوب...' : 'استخراج الأسئلة...');
-    const questions = await extractAllQuestionsParallel(text, reqId, quality.isCorrupted);
+    updateProgress(reqId, 45, 'إعادة كتابة الأسئلة بالعربية الصحيحة...');
+    const questions = await extractAllQuestionsParallel(text, reqId);
 
     if (!questions || questions.length === 0) {
       clearProgress(reqId);
       return res.status(400).json({
         success: false,
-        error: quality.isCorrupted 
-          ? 'الملف معطوب جداً. جرب إعادة تصدير PDF بترميز صحيح.'
-          : 'لم يتم العثور على أسئلة في الملف'
+        error: 'لم يتم العثور على أسئلة واضحة. جميع الأسئلة متلخبطة أو غير قابلة للقراءة.'
       });
     }
 
@@ -409,7 +439,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     const time = ((Date.now() - start) / 1000).toFixed(2);
     
     console.log(`${'='.repeat(60)}`);
-    console.log(`✅ SUCCESS: ${questions.length} questions in ${time}s`);
+    console.log(`✅ SUCCESS: ${questions.length} clean questions in ${time}s`);
     console.log(`${'='.repeat(60)}\n`);
 
     updateProgress(reqId, 100, 'تم! ✅');
@@ -421,8 +451,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       totalQuestions: questions.length,
       chapters: chapters,
       questions: questions,
-      processingTime: `${time}s`,
-      quality: quality.isCorrupted ? 'corrupted-fixed' : 'good'
+      processingTime: `${time}s`
     });
 
   } catch (error) {
@@ -454,15 +483,15 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 AI Quiz System V4.2 OPTIMIZED');
+  console.log('🚀 AI Quiz System V4.3 REWRITE');
   console.log('='.repeat(60));
   console.log(`📡 Port: ${PORT}`);
   console.log(`🤖 Model: ${OPENAI_MODEL}`);
   console.log('✨ Features:');
-  console.log('   - Parallel processing (3x faster)');
-  console.log('   - Corrupted file handling');
-  console.log('   - Smart text analysis');
-  console.log('   - Two-pass extraction');
+  console.log('   - Forces GPT-4 to REWRITE, not copy');
+  console.log('   - Strict garbled text detection');
+  console.log('   - Rejects any garbled output');
+  console.log('   - Only clean Arabic questions');
   console.log('='.repeat(60) + '\n');
 });
 
