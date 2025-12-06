@@ -1,6 +1,6 @@
 // ====================================
-// AI Quiz System - Backend Server
-// FIXED VERSION - JSON Parse Error Resolved
+// AI Quiz System - Backend Server V2
+// Enhanced Version with Chunking & Progress Tracking
 // ====================================
 
 require('dotenv').config();
@@ -28,6 +28,39 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const MAX_PDF_SIZE_MB = parseInt(process.env.MAX_PDF_SIZE_MB) || 50;
 const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
 
+// Chunking Configuration
+const CHUNK_SIZE = 4000; // characters per chunk
+const MAX_TOKENS_PER_REQUEST = 3500;
+
+// ====================================
+// Progress Tracking
+// ====================================
+
+const progressStore = new Map();
+
+function updateProgress(requestId, progress, message) {
+  progressStore.set(requestId, { progress, message, timestamp: Date.now() });
+  console.log(`[${requestId}] ${progress}% - ${message}`);
+}
+
+function getProgress(requestId) {
+  return progressStore.get(requestId) || { progress: 0, message: 'جاري البدء...' };
+}
+
+function clearProgress(requestId) {
+  progressStore.delete(requestId);
+}
+
+// Clean old progress entries (older than 10 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of progressStore.entries()) {
+    if (now - value.timestamp > 10 * 60 * 1000) {
+      progressStore.delete(key);
+    }
+  }
+}, 60000);
+
 // ====================================
 // Middleware
 // ====================================
@@ -48,7 +81,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000, // 1 hour
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 10,
   message: {
     success: false,
@@ -60,7 +93,7 @@ const limiter = rateLimit({
 
 app.use('/api/', limiter);
 
-// Configure multer for file uploads
+// Configure multer
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
@@ -77,18 +110,13 @@ const upload = multer({
 });
 
 // ====================================
-// AI Prompt Template
+// Enhanced AI Prompt Template
 // ====================================
 
 const AI_PROMPT = `أنت أداة متخصصة في تحويل نصوص الامتحانات العربية إلى أسئلة اختيار من متعدد منظمة.
 
 المدخلات:
 - نص عربي مستخرج من ملف PDF يحتوي على أسئلة امتحان.
-- النص قد يحتوي على:
-  - عناوين فصول أو وحدات (مثل: "الفصل الأول"، "الوحدة الثانية")
-  - نص السؤال
-  - خيارات الإجابة
-  - علامات للإجابة الصحيحة (مثل: ✓، ✔، √، *)
 
 مهمتك:
 1. استخراج أسئلة الاختيار من متعدد فقط (MCQ).
@@ -97,18 +125,17 @@ const AI_PROMPT = `أنت أداة متخصصة في تحويل نصوص الا�
    - question (نص، إلزامي): نص السؤال كاملاً
    - options (مصفوفة): 2-10 خيارات للإجابة
    - correct (رقم، إلزامي): رقم الخيار الصحيح (يبدأ من 0)
-3. إذا لم تكن هناك علامة واضحة للإجابة الصحيحة، استنتج الإجابة الأصح بناءً على السياق.
-4. تنظيف النص:
-   - إزالة أرقام الصفحات والترويسات والتذييلات
-   - إزالة المسافات والأسطر الزائدة
-   - تنظيف النص من أي رموز غريبة
-5. حقل الفصل (chapter):
-   - إذا كان السؤال ينتمي بوضوح لفصل معين، ضع اسم الفصل
-   - وإلا، احذف الحقل أو اجعله null
 
-المخرجات:
-- مصفوفة JSON صالحة فقط، بدون أي تعليقات أو شرح أو markdown
-- يجب أن تطابق JSON هذا الشكل بالضبط:
+CRITICAL RULES:
+1. استخرج فقط الأسئلة الواضحة والمكتملة
+2. إذا السؤال غير واضح - احذفه
+3. إذا الخيارات غير واضحة - احذف السؤال
+4. تأكد أن كل سؤال له خيارين على الأقل
+5. تأكد أن رقم الإجابة الصحيحة بين 0 و (عدد الخيارات - 1)
+6. احذف أي سؤال غير مكتمل أو غامض
+
+المخرجات - JSON ONLY:
+يجب أن تطابق JSON هذا الشكل بالضبط:
 
 [
   {
@@ -124,12 +151,12 @@ const AI_PROMPT = `أنت أداة متخصصة في تحويل نصوص الا�
   }
 ]
 
-قواعد مهمة جداً:
-- لا تضف أي نص خارج JSON
-- لا تستخدم markdown مثل \`\`\`json
-- تأكد من صحة JSON بالكامل
-- تأكد أن correct بين 0 و (عدد الخيارات - 1)
-- احذف أي سؤال غير مكتمل أو غامض
+IMPORTANT:
+- Return ONLY valid JSON array
+- No markdown (\`\`\`json)
+- No explanations
+- No comments
+- Pure JSON only
 
 الآن، استخرج الأسئلة من النص التالي:`;
 
@@ -138,15 +165,50 @@ const AI_PROMPT = `أنت أداة متخصصة في تحويل نصوص الا�
 // ====================================
 
 /**
- * Extract text from PDF buffer
+ * Fix Arabic text encoding issues
+ */
+function fixArabicText(text) {
+  try {
+    // Normalize Unicode
+    text = text.normalize('NFC');
+    
+    // Fix common Arabic encoding issues
+    text = text.replace(/Ø£/g, 'أ');
+    text = text.replace(/Ø¥/g, 'إ');
+    text = text.replace(/Ø¢/g, 'آ');
+    text = text.replace(/Ø¤/g, 'ؤ');
+    text = text.replace(/Ø¦/g, 'ئ');
+    
+    // Remove zero-width characters
+    text = text.replace(/[\u200B-\u200D\uFEFF]/g, '');
+    
+    return text;
+  } catch (error) {
+    console.error('Error fixing Arabic text:', error);
+    return text;
+  }
+}
+
+/**
+ * Extract text from PDF with better encoding support
  */
 async function extractTextFromPDF(buffer) {
   try {
-    const data = await pdfParse(buffer);
-    return data.text;
+    const data = await pdfParse(buffer, {
+      max: 0, // all pages
+      normalizeWhitespace: true,
+      disableCombineTextItems: false
+    });
+    
+    let text = data.text;
+    
+    // Fix Arabic encoding
+    text = fixArabicText(text);
+    
+    return text;
   } catch (error) {
     console.error('PDF extraction error:', error);
-    throw new Error('فشل استخراج النص من ملف PDF');
+    throw new Error('فشل استخراج النص من ملف PDF. تأكد من أن الملف غير محمي أو مشفر.');
   }
 }
 
@@ -174,16 +236,39 @@ function cleanText(text) {
 }
 
 /**
- * Call OpenAI to extract questions
- * FIXED: Removed response_format to prevent JSON parse errors
+ * Split text into chunks for processing
  */
-async function extractQuestionsWithAI(text, retryCount = 0) {
-  const MAX_RETRIES = 2;
+function splitIntoChunks(text, chunkSize = CHUNK_SIZE) {
+  const chunks = [];
+  const paragraphs = text.split(/\n\n+/);
   
+  let currentChunk = '';
+  
+  for (const paragraph of paragraphs) {
+    if ((currentChunk + paragraph).length <= chunkSize) {
+      currentChunk += paragraph + '\n\n';
+    } else {
+      if (currentChunk) {
+        chunks.push(currentChunk.trim());
+      }
+      currentChunk = paragraph + '\n\n';
+    }
+  }
+  
+  if (currentChunk) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  return chunks;
+}
+
+/**
+ * Call OpenAI to extract questions from a text chunk
+ */
+async function extractQuestionsFromChunk(text, chunkIndex, totalChunks) {
   try {
-    console.log(`Calling OpenAI (attempt ${retryCount + 1})...`);
+    console.log(`Processing chunk ${chunkIndex + 1}/${totalChunks} (${text.length} chars)`);
     
-    // FIXED: Removed response_format: { type: "json_object" } that was causing issues
     const completion = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       messages: [
@@ -197,16 +282,14 @@ async function extractQuestionsWithAI(text, retryCount = 0) {
         }
       ],
       temperature: 0.3,
-      max_tokens: 4000
+      max_tokens: MAX_TOKENS_PER_REQUEST
     });
 
     const response = completion.choices[0].message.content;
-    console.log('OpenAI response received');
     
-    // Try to parse JSON with better error handling
+    // Parse JSON with better error handling
     let questions;
     try {
-      // Remove markdown code blocks if present
       let cleanedResponse = response.trim();
       cleanedResponse = cleanedResponse.replace(/^```json\s*/i, '');
       cleanedResponse = cleanedResponse.replace(/^```\s*/i, '');
@@ -214,44 +297,70 @@ async function extractQuestionsWithAI(text, retryCount = 0) {
       cleanedResponse = cleanedResponse.trim();
       
       const parsed = JSON.parse(cleanedResponse);
-      // Handle different possible response formats
       questions = Array.isArray(parsed) ? parsed : (parsed.questions || []);
     } catch (parseError) {
-      console.error('JSON parse error:', parseError);
-      console.error('Response was:', response.substring(0, 500));
+      console.error('JSON parse error for chunk:', parseError);
       
-      // Try to extract JSON array from response
       const jsonMatch = response.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
-        try {
-          questions = JSON.parse(jsonMatch[0]);
-        } catch (e) {
-          throw new Error('فشل تحليل استجابة AI - JSON غير صالح');
-        }
+        questions = JSON.parse(jsonMatch[0]);
       } else {
-        throw new Error('فشل تحليل استجابة AI - لم يتم العثور على JSON');
+        console.error('No valid JSON found in chunk response');
+        return [];
       }
     }
 
-    // Validate questions
-    const validQuestions = validateQuestions(questions);
-    
-    if (validQuestions.length === 0 && retryCount < MAX_RETRIES) {
-      console.log('No valid questions found, retrying...');
-      return extractQuestionsWithAI(text, retryCount + 1);
-    }
-    
-    return validQuestions;
+    return validateQuestions(questions);
     
   } catch (error) {
-    console.error('OpenAI API error:', error);
+    console.error(`Error processing chunk ${chunkIndex + 1}:`, error);
+    return [];
+  }
+}
+
+/**
+ * Extract questions with chunking support
+ */
+async function extractQuestionsWithAI(text, requestId) {
+  try {
+    const textLength = text.length;
+    console.log(`Total text length: ${textLength} characters`);
     
-    if (retryCount < MAX_RETRIES) {
-      console.log(`Retrying... (${retryCount + 1}/${MAX_RETRIES})`);
-      return extractQuestionsWithAI(text, retryCount + 1);
+    // If text is small, process directly
+    if (textLength <= CHUNK_SIZE) {
+      updateProgress(requestId, 70, 'استخراج الأسئلة بالذكاء الاصطناعي...');
+      const questions = await extractQuestionsFromChunk(text, 0, 1);
+      return questions;
     }
     
-    throw new Error('فشل استخراج الأسئلة باستخدام الذكاء الاصطناعي: ' + error.message);
+    // Split into chunks
+    updateProgress(requestId, 55, 'تقسيم النص إلى أجزاء...');
+    const chunks = splitIntoChunks(text, CHUNK_SIZE);
+    console.log(`Split into ${chunks.length} chunks`);
+    
+    // Process each chunk
+    const allQuestions = [];
+    const progressPerChunk = 35 / chunks.length; // 55% to 90%
+    
+    for (let i = 0; i < chunks.length; i++) {
+      const progress = 55 + Math.round((i + 1) * progressPerChunk);
+      updateProgress(requestId, progress, `استخراج الأسئلة... (${i + 1}/${chunks.length})`);
+      
+      const questions = await extractQuestionsFromChunk(chunks[i], i, chunks.length);
+      allQuestions.push(...questions);
+      
+      // Small delay to avoid rate limiting
+      if (i < chunks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
+    console.log(`Extracted ${allQuestions.length} questions from ${chunks.length} chunks`);
+    return allQuestions;
+    
+  } catch (error) {
+    console.error('Error in extractQuestionsWithAI:', error);
+    throw error;
   }
 }
 
@@ -267,23 +376,18 @@ function validateQuestions(questions) {
   return questions.filter(q => {
     // Check required fields
     if (!q.question || typeof q.question !== 'string') {
-      console.log('Invalid question: missing or invalid question text');
       return false;
     }
     if (!Array.isArray(q.options)) {
-      console.log('Invalid question: options is not an array');
       return false;
     }
     if (q.options.length < 2) {
-      console.log('Invalid question: less than 2 options');
       return false;
     }
     if (typeof q.correct !== 'number') {
-      console.log('Invalid question: correct is not a number');
       return false;
     }
     if (q.correct < 0 || q.correct >= q.options.length) {
-      console.log('Invalid question: correct index out of range');
       return false;
     }
     
@@ -311,8 +415,18 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Server is running',
     timestamp: new Date().toISOString(),
-    model: OPENAI_MODEL
+    model: OPENAI_MODEL,
+    version: '2.0'
   });
+});
+
+/**
+ * Progress check endpoint
+ */
+app.get('/api/progress/:requestId', (req, res) => {
+  const { requestId } = req.params;
+  const progress = getProgress(requestId);
+  res.json(progress);
 });
 
 /**
@@ -320,6 +434,7 @@ app.get('/api/health', (req, res) => {
  */
 app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
   const startTime = Date.now();
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   try {
     // Validate file exists
@@ -330,44 +445,58 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       });
     }
 
-    console.log(`Processing PDF: ${req.file.originalname} (${req.file.size} bytes)`);
+    console.log(`[${requestId}] Processing PDF: ${req.file.originalname} (${req.file.size} bytes)`);
 
     // Step 1: Extract text from PDF
-    console.log('Step 1: Extracting text from PDF...');
+    updateProgress(requestId, 10, 'رفع الملف...');
+    await new Promise(resolve => setTimeout(resolve, 500)); // Simulate upload
+    
+    updateProgress(requestId, 25, 'استخراج النص من PDF...');
     const rawText = await extractTextFromPDF(req.file.buffer);
     
     if (!rawText || rawText.length < 100) {
+      clearProgress(requestId);
       return res.status(400).json({
         success: false,
-        error: 'الملف لا يحتوي على نص كافٍ'
+        error: 'الملف لا يحتوي على نص كافٍ أو قد يكون محمياً'
       });
     }
 
     // Step 2: Clean text
-    console.log('Step 2: Cleaning text...');
+    updateProgress(requestId, 40, 'تنظيف النص...');
     const cleanedText = cleanText(rawText);
-    console.log(`Text cleaned: ${cleanedText.length} characters`);
+    console.log(`[${requestId}] Text cleaned: ${cleanedText.length} characters`);
 
-    // Step 3: Extract questions using AI
-    console.log('Step 3: Extracting questions with AI...');
-    const questions = await extractQuestionsWithAI(cleanedText);
+    // Step 3: Extract questions using AI (with chunking)
+    updateProgress(requestId, 50, 'بدء استخراج الأسئلة...');
+    const questions = await extractQuestionsWithAI(cleanedText, requestId);
 
     if (!questions || questions.length === 0) {
+      clearProgress(requestId);
       return res.status(400).json({
         success: false,
-        error: 'لم يتم العثور على أسئلة في الملف. تأكد من أن الملف يحتوي على أسئلة اختيار من متعدد.'
+        error: 'لم يتم العثور على أسئلة واضحة في الملف. تأكد من أن الملف يحتوي على أسئلة اختيار من متعدد بصيغة واضحة.'
       });
     }
 
+    // Finalize
+    updateProgress(requestId, 95, 'جاري الإنهاء...');
+    
     // Get chapters list
     const chapters = [...new Set(questions.map(q => q.chapter).filter(Boolean))];
 
     const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`Success! Extracted ${questions.length} questions in ${processingTime}s`);
+    console.log(`[${requestId}] Success! Extracted ${questions.length} questions in ${processingTime}s`);
+
+    updateProgress(requestId, 100, 'تم بنجاح! ✅');
+    
+    // Clear progress after 5 seconds
+    setTimeout(() => clearProgress(requestId), 5000);
 
     // Return success response
     res.json({
       success: true,
+      requestId: requestId,
       totalQuestions: questions.length,
       chapters: chapters,
       questions: questions,
@@ -375,7 +504,8 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error processing PDF:', error);
+    console.error(`[${requestId}] Error:`, error);
+    clearProgress(requestId);
     
     // Handle specific errors
     if (error.code === 'LIMIT_FILE_SIZE') {
@@ -418,12 +548,14 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('====================================');
-  console.log('🚀 AI Quiz System Server - FIXED');
+  console.log('🚀 AI Quiz System Server V2.0');
   console.log('====================================');
   console.log(`📡 Server running on: http://localhost:${PORT}`);
   console.log(`🤖 AI Model: ${OPENAI_MODEL}`);
   console.log(`📁 Max PDF size: ${MAX_PDF_SIZE_MB}MB`);
+  console.log(`📦 Chunk size: ${CHUNK_SIZE} chars`);
   console.log(`🔒 Rate limit: ${process.env.RATE_LIMIT_MAX_REQUESTS || 10} requests/hour`);
+  console.log('✨ Features: Chunking, Progress Tracking, Enhanced PDF Parsing');
   console.log('====================================');
 });
 
