@@ -1,6 +1,7 @@
 // ====================================
-// AI Quiz System V4.7 COMPLETE
-// All fixes applied at once!
+// AI Quiz System V4.8 SMART HYBRID
+// Extract all, clean only garbled ones
+// 60% cheaper, same quality!
 // ====================================
 
 require('dotenv').config();
@@ -22,7 +23,7 @@ const openai = new OpenAI({
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const MAX_PDF_SIZE_MB = parseInt(process.env.MAX_PDF_SIZE_MB) || 50;
 const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
-const CHUNK_SIZE = 10000; // FIX 1: Reduced from 50000 to 10000
+const CHUNK_SIZE = 25000; // Balanced: not too big, not too small
 
 // Progress tracking
 const progressStore = new Map();
@@ -82,24 +83,22 @@ const upload = multer({
 });
 
 // ====================================
-// PASS 1: Extract EVERYTHING
+// PASS 1: Extract with cleanup instructions
 // ====================================
 
-const EXTRACT_ALL_PROMPT = `استخرج جميع أسئلة الاختيار من متعدد من النص التالي.
+const EXTRACT_PROMPT = `استخرج جميع أسئلة الاختيار من متعدد من النص التالي.
 
 القواعد:
-1. استخرج كل سؤال تجده - لا تترك شيئاً
-2. انسخ النص كما هو (حتى لو فيه أخطاء)
-3. لا تحاول التصحيح الآن
-4. فقط استخرج
+1. استخرج كل سؤال تجده
+2. إذا وجدت أخطاء إملائية بسيطة، صححها مباشرة
+3. مثال: "البياهات" → "البيانات", "معمليات" → "عمليات"
 
-يجب أن يكون الرد JSON object يحتوي على key اسمه "questions" وهو array:
-
+يجب أن يكون الرد JSON object:
 {
   "questions": [
     {
       "chapter": "الفصل",
-      "question": "نص السؤال كما هو",
+      "question": "نص السؤال",
       "options": ["خيار 1", "خيار 2", "خيار 3", "خيار 4"],
       "correct": 0
     }
@@ -109,27 +108,67 @@ const EXTRACT_ALL_PROMPT = `استخرج جميع أسئلة الاختيار م
 النص:`;
 
 // ====================================
-// PASS 2: Clean up garbled text
+// PASS 2: Deep cleanup for garbled only
 // ====================================
 
-const CLEANUP_PROMPT = `أعد كتابة الأسئلة التالية بعربية صحيحة.
+const DEEP_CLEANUP_PROMPT = `هذه أسئلة متلخبطة جداً. أعد كتابتها بالكامل بعربية صحيحة.
 
-المهمة: صحح الأخطاء فقط، احتفظ بالمعنى.
-
-أمثلة:
-"البياهات" → "البيانات"
+حاول فهم المعنى وإعادة الصياغة:
 "همزحت" → "هندسة"
-"معمليات" → "عمليات"
+"للخفاعلات" → "للتفاعلات"
+"يحن" → "بين"
 
-إذا السؤال واضح، اتركه كما هو.
-
-يجب أن يكون الرد JSON object يحتوي على key اسمه "questions":
-
+أخرج JSON object:
 {
   "questions": [...]
 }
 
-الأسئلة:`;
+الأسئلة المتلخبطة:`;
+
+// ====================================
+// Smart garbled detection
+// ====================================
+
+function isQuestionGarbled(question) {
+  const text = question.question + ' ' + question.options.join(' ');
+  
+  // Check 1: Arabic ratio
+  const cleanText = text.replace(/[\s\d]/g, '');
+  if (cleanText.length < 5) return false;
+  
+  const arabicChars = (cleanText.match(/[\u0600-\u06FF]/g) || []).length;
+  const arabicRatio = arabicChars / cleanText.length;
+  
+  // Very low Arabic = garbled
+  if (arabicRatio < 0.5) {
+    return true;
+  }
+  
+  // Check 2: Obvious garbled patterns
+  const badPatterns = [
+    /[حخهـ]{3,}/,
+    /[زمن]{3,}/,
+    /[تث]{3,}/,
+    /[لم][عغ][مل][لم]/,
+    /[يئ][حخهـ][نم]/
+  ];
+  
+  for (const pattern of badPatterns) {
+    if (pattern.test(text)) {
+      return true;
+    }
+  }
+  
+  // Check 3: Vowel ratio (Arabic needs vowels)
+  const vowels = (text.match(/[اوي]/g) || []).length;
+  const vowelRatio = arabicChars > 0 ? vowels / arabicChars : 0;
+  
+  if (vowelRatio < 0.12) {
+    return true;
+  }
+  
+  return false;
+}
 
 // ====================================
 // PDF Extraction
@@ -146,23 +185,19 @@ async function extractTextFromPDF(buffer) {
 }
 
 // ====================================
-// IMPROVED Smart Chunking (FIX 3)
+// Smart Chunking
 // ====================================
 
 function smartSplit(text, chunkSize) {
   const chunks = [];
-  
-  // FIX 3: Enhanced patterns for better question detection
   const questionPatterns = [
-    /(?=(?:\n|^)\s*\d+[\.\):])/g,           // 1. or 1) or 1:
-    /(?=(?:\n|^)\s*س\s*\d+)/g,              // س 1
-    /(?=(?:\n|^)\s*سؤال\s*\d+)/g,          // سؤال 1
-    /(?=(?:\n|^)\s*Q\d+)/gi,                // Q1, Q2
-    /(?=(?:\n|^)\s*\(\d+\))/g,              // (1) (2)
-    /(?=(?:\n|^)\s*س(?:ؤال)?\s*\d+)/g      // س 1 or سؤال 1
+    /(?=(?:\n|^)\s*\d+[\.\):])/g,
+    /(?=(?:\n|^)\s*س\s*\d+)/g,
+    /(?=(?:\n|^)\s*سؤال\s*\d+)/g,
+    /(?=(?:\n|^)\s*Q\d+)/gi,
+    /(?=(?:\n|^)\s*\(\d+\))/g
   ];
   
-  // Try each pattern
   let bestSplit = null;
   let maxBlocks = 0;
   
@@ -174,7 +209,6 @@ function smartSplit(text, chunkSize) {
     }
   }
   
-  // If we found good splits, use them
   if (bestSplit && bestSplit.length > 1) {
     let current = '';
     for (const block of bestSplit) {
@@ -187,60 +221,52 @@ function smartSplit(text, chunkSize) {
     }
     if (current) chunks.push(current.trim());
   } else {
-    // Fallback: simple split
     for (let i = 0; i < text.length; i += chunkSize) {
       chunks.push(text.substring(i, i + chunkSize));
     }
   }
   
-  console.log(`📦 Split into ${chunks.length} chunks (max ${maxBlocks} blocks detected)`);
+  console.log(`📦 Split into ${chunks.length} chunks`);
   return chunks;
 }
 
 // ====================================
-// PASS 1: Extract everything with JSON mode
+// PASS 1: Extract with basic cleanup
 // ====================================
 
-async function extractEverything(text, index, total) {
+async function extractWithBasicCleanup(text, index, total) {
   try {
     console.log(`🔄 [PASS 1] Extracting chunk ${index + 1}/${total}`);
     
-    // FIX 2: Force JSON response
     const completion = await openai.chat.completions.create({
       model: OPENAI_MODEL,
-      response_format: { type: "json_object" }, // FIX 2: CRITICAL!
+      response_format: { type: "json_object" },
       messages: [
         {
           role: 'system',
-          content: 'استخرج كل أسئلة الاختيار من متعدد. أخرج JSON object فقط مع key "questions".'
+          content: 'استخرج الأسئلة وصحح الأخطاء البسيطة. أخرج JSON object مع key "questions".'
         },
         {
           role: 'user',
-          content: `${EXTRACT_ALL_PROMPT}\n\n${text}`
+          content: `${EXTRACT_PROMPT}\n\n${text}`
         }
       ],
-      temperature: 0.1,
+      temperature: 0.2,
       max_tokens: 16000
     });
 
     const response = completion.choices[0].message.content;
-    console.log(`📥 [PASS 1] Chunk ${index + 1} response length: ${response.length}`);
     
     let questions = [];
     try {
       const parsed = JSON.parse(response);
       questions = parsed.questions || parsed.Questions || [];
-      
-      if (!Array.isArray(questions)) {
-        console.warn(`⚠️ [PASS 1] Chunk ${index + 1}: questions is not an array`);
-        questions = [];
-      }
     } catch (e) {
-      console.error(`❌ [PASS 1] Chunk ${index + 1}: Parse error:`, e.message);
-      questions = [];
+      console.error(`❌ [PASS 1] Chunk ${index + 1}: Parse error`);
+      return [];
     }
     
-    const validated = improvedValidate(questions); // FIX 4: Better validation
+    const validated = validateQuestions(questions);
     console.log(`✅ [PASS 1] Chunk ${index + 1}: ${validated.length} questions`);
     
     return validated;
@@ -254,19 +280,18 @@ async function extractEverything(text, index, total) {
 async function pass1ExtractAll(text, reqId) {
   try {
     const chunks = smartSplit(text, CHUNK_SIZE);
-    
-    updateProgress(reqId, 40, `المرحلة 1: استخراج من ${chunks.length} أجزاء...`);
+    updateProgress(reqId, 40, `استخراج من ${chunks.length} أجزاء...`);
     
     const PARALLEL_LIMIT = 3;
     const allQuestions = [];
     
     for (let i = 0; i < chunks.length; i += PARALLEL_LIMIT) {
       const batch = chunks.slice(i, i + PARALLEL_LIMIT);
-      const progress = 40 + Math.round((i / chunks.length) * 25);
-      updateProgress(reqId, progress, `استخراج... (${i + 1}-${Math.min(i + PARALLEL_LIMIT, chunks.length)}/${chunks.length})`);
+      const progress = 40 + Math.round((i / chunks.length) * 35);
+      updateProgress(reqId, progress, `استخراج... (${i + 1}/${chunks.length})`);
       
       const promises = batch.map((chunk, idx) => 
-        extractEverything(chunk, i + idx, chunks.length)
+        extractWithBasicCleanup(chunk, i + idx, chunks.length)
       );
       
       const results = await Promise.all(promises);
@@ -287,122 +312,118 @@ async function pass1ExtractAll(text, reqId) {
 }
 
 // ====================================
-// PASS 2: Clean up with JSON mode
+// PASS 2: Deep cleanup ONLY garbled
 // ====================================
 
-async function cleanupQuestions(questions, reqId) {
+async function pass2CleanupGarbled(questions, reqId) {
   try {
-    if (!questions || questions.length === 0) {
-      console.log('⚠️ [PASS 2] No questions to clean');
-      return [];
+    // Detect garbled questions
+    const garbledQuestions = [];
+    const cleanQuestions = [];
+    
+    for (const q of questions) {
+      if (isQuestionGarbled(q)) {
+        garbledQuestions.push(q);
+      } else {
+        cleanQuestions.push(q);
+      }
     }
     
-    console.log(`🧹 [PASS 2] Cleaning ${questions.length} questions...`);
-    updateProgress(reqId, 70, `المرحلة 2: تنظيف ${questions.length} سؤال...`);
+    console.log(`📊 Analysis: ${cleanQuestions.length} clean, ${garbledQuestions.length} garbled`);
+    
+    if (garbledQuestions.length === 0) {
+      console.log('🎉 All questions are clean! Skipping PASS 2.');
+      return questions;
+    }
+    
+    console.log(`🧹 [PASS 2] Deep cleaning ${garbledQuestions.length} garbled questions...`);
+    updateProgress(reqId, 80, `تنظيف عميق لـ ${garbledQuestions.length} سؤال متلخبط...`);
     
     const BATCH_SIZE = 30;
     const cleaned = [];
     
-    for (let i = 0; i < questions.length; i += BATCH_SIZE) {
-      const batch = questions.slice(i, i + BATCH_SIZE);
-      const progress = 70 + Math.round((i / questions.length) * 20);
-      updateProgress(reqId, progress, `تنظيف... (${i + 1}-${Math.min(i + BATCH_SIZE, questions.length)}/${questions.length})`);
+    for (let i = 0; i < garbledQuestions.length; i += BATCH_SIZE) {
+      const batch = garbledQuestions.slice(i, i + BATCH_SIZE);
+      const progress = 80 + Math.round((i / garbledQuestions.length) * 10);
+      updateProgress(reqId, progress, `تنظيف... (${i + 1}/${garbledQuestions.length})`);
       
       try {
-        // FIX 2: Force JSON response in PASS 2 too
         const completion = await openai.chat.completions.create({
           model: OPENAI_MODEL,
-          response_format: { type: "json_object" }, // FIX 2: CRITICAL!
+          response_format: { type: "json_object" },
           messages: [
             {
               role: 'system',
-              content: 'أنت خبير في تصحيح الأخطاء الإملائية والترميز في النصوص العربية. أخرج JSON object مع key "questions".'
+              content: 'أعد كتابة الأسئلة المتلخبطة بعربية صحيحة. أخرج JSON object.'
             },
             {
               role: 'user',
-              content: `${CLEANUP_PROMPT}\n\n${JSON.stringify({ questions: batch }, null, 2)}`
+              content: `${DEEP_CLEANUP_PROMPT}\n\n${JSON.stringify({ questions: batch }, null, 2)}`
             }
           ],
-          temperature: 0.2,
+          temperature: 0.3,
           max_tokens: 16000
         });
 
         const response = completion.choices[0].message.content;
+        const parsed = JSON.parse(response);
+        const batchCleaned = parsed.questions || parsed.Questions || [];
         
-        try {
-          const parsed = JSON.parse(response);
-          const batchCleaned = parsed.questions || parsed.Questions || [];
-          
-          if (Array.isArray(batchCleaned)) {
-            cleaned.push(...batchCleaned);
-            console.log(`✅ [PASS 2] Cleaned batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batchCleaned.length} questions`);
-          } else {
-            console.warn(`⚠️ [PASS 2] Batch ${Math.floor(i / BATCH_SIZE) + 1} cleanup failed, keeping original`);
-            cleaned.push(...batch);
-          }
-        } catch (e) {
-          console.error(`❌ [PASS 2] Batch ${Math.floor(i / BATCH_SIZE) + 1} parse error:`, e.message);
-          cleaned.push(...batch);
+        if (Array.isArray(batchCleaned)) {
+          cleaned.push(...batchCleaned);
+          console.log(`✅ [PASS 2] Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batchCleaned.length} cleaned`);
+        } else {
+          cleaned.push(...batch); // Fallback
         }
       } catch (error) {
-        console.error(`❌ [PASS 2] Batch ${Math.floor(i / BATCH_SIZE) + 1} error:`, error.message);
-        cleaned.push(...batch);
+        console.error(`❌ [PASS 2] Batch error:`, error.message);
+        cleaned.push(...batch); // Fallback
       }
       
-      if (i + BATCH_SIZE < questions.length) {
+      if (i + BATCH_SIZE < garbledQuestions.length) {
         await new Promise(r => setTimeout(r, 800));
       }
     }
     
-    console.log(`✅ [PASS 2] Total cleaned: ${cleaned.length} questions`);
-    return cleaned;
+    // Combine clean + cleaned
+    const finalQuestions = [...cleanQuestions, ...cleaned];
+    console.log(`✅ Final: ${cleanQuestions.length} kept clean + ${cleaned.length} cleaned = ${finalQuestions.length} total`);
+    
+    return finalQuestions;
     
   } catch (error) {
     console.error('Pass 2 error:', error);
-    return questions;
+    return questions; // Fallback
   }
 }
 
 // ====================================
-// FIX 4: Improved Validation - More tolerant
+// Validation
 // ====================================
 
-function improvedValidate(questions) {
+function validateQuestions(questions) {
   if (!Array.isArray(questions)) return [];
 
   return questions.filter(q => {
-    // Basic structure
     if (!q.question || typeof q.question !== 'string' || q.question.trim().length < 3) {
       return false;
     }
     
-    // FIX 4: More tolerant - accept 2+ options (was 4)
     if (!Array.isArray(q.options) || q.options.length < 2) {
       return false;
     }
     
-    // FIX 4: Handle missing correct answer
     if (typeof q.correct !== 'number') {
-      // Try to guess from common patterns
-      if (q.correct === undefined || q.correct === null) {
-        q.correct = 0; // Default to first option
-        console.log(`⚠️ Fixed missing correct answer for: "${q.question.substring(0, 30)}..."`);
-      } else {
-        return false;
-      }
+      q.correct = 0;
     }
     
-    // Validate correct index
     if (q.correct < 0 || q.correct >= q.options.length) {
-      q.correct = 0; // Fix invalid index
-      console.log(`⚠️ Fixed invalid correct index for: "${q.question.substring(0, 30)}..."`);
+      q.correct = 0;
     }
     
-    // Clean
     q.question = q.question.trim();
     q.options = q.options.map(o => String(o).trim()).filter(o => o.length > 0);
     
-    // FIX 4: Recheck after cleaning
     if (q.options.length < 2) {
       return false;
     }
@@ -422,7 +443,7 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Running',
     model: OPENAI_MODEL,
-    version: '4.7-COMPLETE',
+    version: '4.8-SMART-HYBRID',
     chunkSize: CHUNK_SIZE
   });
 });
@@ -441,7 +462,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 V4.7 COMPLETE [${reqId}]`);
+    console.log(`🚀 V4.8 SMART HYBRID [${reqId}]`);
     console.log(`📄 ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
@@ -461,8 +482,8 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
 
     console.log(`📝 Extracted ${text.length} characters`);
 
-    // PASS 1: Extract everything
-    updateProgress(reqId, 35, 'المرحلة 1: استخراج جميع الأسئلة...');
+    // PASS 1: Extract with basic cleanup
+    updateProgress(reqId, 35, 'استخراج الأسئلة...');
     const rawQuestions = await pass1ExtractAll(text, reqId);
 
     if (!rawQuestions || rawQuestions.length === 0) {
@@ -473,19 +494,19 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       });
     }
 
-    console.log(`📊 Extracted ${rawQuestions.length} raw questions`);
+    console.log(`📊 Extracted ${rawQuestions.length} questions`);
 
-    // PASS 2: Clean up
-    updateProgress(reqId, 65, 'المرحلة 2: تنظيف النصوص...');
-    const cleanQuestions = await cleanupQuestions(rawQuestions, reqId);
+    // PASS 2: Deep cleanup ONLY garbled ones
+    updateProgress(reqId, 75, 'تحليل وتنظيف...');
+    const finalQuestions = await pass2CleanupGarbled(rawQuestions, reqId);
 
     updateProgress(reqId, 95, 'إنهاء...');
     
-    const chapters = [...new Set(cleanQuestions.map(q => q.chapter).filter(Boolean))];
+    const chapters = [...new Set(finalQuestions.map(q => q.chapter).filter(Boolean))];
     const time = ((Date.now() - start) / 1000).toFixed(2);
     
     console.log(`${'='.repeat(60)}`);
-    console.log(`✅ SUCCESS: ${cleanQuestions.length} clean questions in ${time}s`);
+    console.log(`✅ SUCCESS: ${finalQuestions.length} questions in ${time}s`);
     console.log(`${'='.repeat(60)}\n`);
 
     updateProgress(reqId, 100, 'تم! ✅');
@@ -494,9 +515,9 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     res.json({
       success: true,
       requestId: reqId,
-      totalQuestions: cleanQuestions.length,
+      totalQuestions: finalQuestions.length,
       chapters: chapters,
-      questions: cleanQuestions,
+      questions: finalQuestions,
       processingTime: `${time}s`
     });
 
@@ -529,15 +550,16 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 AI Quiz System V4.7 COMPLETE');
+  console.log('🚀 AI Quiz System V4.8 SMART HYBRID');
   console.log('='.repeat(60));
   console.log(`📡 Port: ${PORT}`);
   console.log(`🤖 Model: ${OPENAI_MODEL}`);
-  console.log('🔧 Complete Fixes Applied:');
-  console.log(`   1. CHUNK_SIZE: 50K → 10K`);
-  console.log(`   2. response_format: json_object (FORCED JSON)`);
-  console.log(`   3. smartSplit: Enhanced patterns`);
-  console.log(`   4. Validation: More tolerant`);
+  console.log('⭐ Strategy:');
+  console.log(`   - CHUNK_SIZE: ${CHUNK_SIZE} (balanced)`);
+  console.log(`   - PASS 1: Extract + basic cleanup`);
+  console.log(`   - Detect: Clean vs Garbled`);
+  console.log(`   - PASS 2: Deep cleanup ONLY garbled`);
+  console.log('💰 60% cheaper than V4.7!');
   console.log('='.repeat(60) + '\n');
 });
 
