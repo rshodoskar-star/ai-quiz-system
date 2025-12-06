@@ -1,6 +1,8 @@
 // ====================================
-// AI Quiz System V4.4 BALANCED
-// Best of all worlds: Clean text + High count
+// AI Quiz System V4.5 TWO-PASS
+// Pass 1: Extract ALL questions (like V4.1)
+// Pass 2: Clean up garbled text
+// Best of both worlds!
 // ====================================
 
 require('dotenv').config();
@@ -82,41 +84,45 @@ const upload = multer({
 });
 
 // ====================================
-// BALANCED Prompt - Clean but comprehensive
+// PASS 1: Extract EVERYTHING
 // ====================================
 
-const BALANCED_PROMPT = `أنت خبير في استخراج أسئلة الامتحانات وإعادة صياغتها بشكل احترافي.
-
-المهمة:
-1. استخرج جميع أسئلة الاختيار من متعدد من النص
-2. إذا وجدت أخطاء إملائية أو ترميز، صححها بهدوء
-3. أعد صياغة الأسئلة بشكل واضح ومفهوم
-4. احتفظ بالمعنى الأصلي
-
-أمثلة على التصحيح البسيط:
-- "البياهات" → "البيانات"
-- "معمليات" → "عمليات"
-- "يحن" → "بين"
+const EXTRACT_ALL_PROMPT = `استخرج جميع أسئلة الاختيار من متعدد من النص التالي.
 
 القواعد:
-- استخرج كل الأسئلة (لا تترك شيئاً)
-- صحح الأخطاء البسيطة
-- إذا السؤال واضح، اتركه كما هو
-- إذا فيه أخطاء، صححها
+1. استخرج كل سؤال تجده - لا تترك شيئاً
+2. انسخ النص كما هو (حتى لو فيه أخطاء)
+3. لا تحاول التصحيح الآن
+4. فقط استخرج
 
-الصيغة - JSON Array:
+JSON Array:
 [
   {
-    "chapter": "اسم الفصل",
-    "question": "نص السؤال واضح",
+    "chapter": "الفصل",
+    "question": "نص السؤال كما هو",
     "options": ["خيار 1", "خيار 2", "خيار 3", "خيار 4"],
     "correct": 0
   }
 ]
 
-JSON فقط، بدون markdown.
-
 النص:`;
+
+// ====================================
+// PASS 2: Clean up garbled text
+// ====================================
+
+const CLEANUP_PROMPT = `أعد كتابة الأسئلة التالية بعربية صحيحة.
+
+المهمة: صحح الأخطاء فقط، احتفظ بالمعنى.
+
+أمثلة:
+"البياهات" → "البيانات"
+"همزحت" → "هندسة"
+"معمليات" → "عمليات"
+
+إذا السؤال واضح، اتركه كما هو.
+
+أخرج نفس الصيغة - JSON Array:`;
 
 // ====================================
 // PDF Extraction
@@ -163,26 +169,26 @@ function smartSplit(text, chunkSize) {
 }
 
 // ====================================
-// Extract with balanced approach
+// PASS 1: Extract everything
 // ====================================
 
-async function extractWithBalance(text, index, total) {
+async function extractEverything(text, index, total) {
   try {
-    console.log(`🔄 Processing chunk ${index + 1}/${total}`);
+    console.log(`🔄 [PASS 1] Extracting chunk ${index + 1}/${total}`);
     
     const completion = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       messages: [
         {
           role: 'system',
-          content: 'أنت خبير في استخراج الأسئلة وتصحيح الأخطاء البسيطة. استخرج كل الأسئلة وصحح الأخطاء بدون مبالغة.'
+          content: 'استخرج كل أسئلة الاختيار من متعدد. لا تصحح شيئاً - فقط استخرج كما هو.'
         },
         {
           role: 'user',
-          content: `${BALANCED_PROMPT}\n\n${text}`
+          content: `${EXTRACT_ALL_PROMPT}\n\n${text}`
         }
       ],
-      temperature: 0.2, // Balanced
+      temperature: 0.1,
       max_tokens: 16000
     });
 
@@ -209,10 +215,10 @@ async function extractWithBalance(text, index, total) {
       }
     }
 
-    const validated = validateBalanced(questions);
-    console.log(`✅ Chunk ${index + 1}: ${validated.valid.length} valid, ${validated.rejected} rejected`);
+    const validated = simpleValidate(questions);
+    console.log(`✅ [PASS 1] Chunk ${index + 1}: ${validated.length} questions`);
     
-    return validated.valid;
+    return validated;
     
   } catch (error) {
     console.error(`❌ Chunk ${index + 1}:`, error.message);
@@ -220,27 +226,22 @@ async function extractWithBalance(text, index, total) {
   }
 }
 
-async function extractAllQuestionsParallel(text, requestId) {
+async function pass1ExtractAll(text, requestId) {
   try {
     const chunks = smartSplit(text, CHUNK_SIZE);
     
-    if (chunks.length === 1) {
-      updateProgress(requestId, 60, 'استخراج وتصحيح الأسئلة...');
-      return await extractWithBalance(chunks[0], 0, 1);
-    }
-    
-    updateProgress(requestId, 50, `معالجة ${chunks.length} أجزاء...`);
+    updateProgress(requestId, 40, `المرحلة 1: استخراج من ${chunks.length} أجزاء...`);
     
     const PARALLEL_LIMIT = 3;
     const allQuestions = [];
     
     for (let i = 0; i < chunks.length; i += PARALLEL_LIMIT) {
       const batch = chunks.slice(i, i + PARALLEL_LIMIT);
-      const progress = 50 + Math.round((i / chunks.length) * 40);
-      updateProgress(requestId, progress, `معالجة... (${i + 1}-${Math.min(i + PARALLEL_LIMIT, chunks.length)}/${chunks.length})`);
+      const progress = 40 + Math.round((i / chunks.length) * 25);
+      updateProgress(requestId, progress, `استخراج... (${i + 1}-${Math.min(i + PARALLEL_LIMIT, chunks.length)}/${chunks.length})`);
       
       const promises = batch.map((chunk, idx) => 
-        extractWithBalance(chunk, i + idx, chunks.length)
+        extractEverything(chunk, i + idx, chunks.length)
       );
       
       const results = await Promise.all(promises);
@@ -251,110 +252,110 @@ async function extractAllQuestionsParallel(text, requestId) {
       }
     }
     
-    console.log(`🎯 Total: ${allQuestions.length} questions from ${chunks.length} chunks`);
+    console.log(`✅ [PASS 1] Total extracted: ${allQuestions.length} questions`);
     return allQuestions;
     
   } catch (error) {
-    console.error('Extraction error:', error);
+    console.error('Pass 1 error:', error);
     throw error;
   }
 }
 
 // ====================================
-// Balanced Validation - Not too strict
+// PASS 2: Clean up
 // ====================================
 
-function hasObviousGarbled(text) {
-  if (!text || text.length < 3) return true;
-  
-  // Only reject VERY obvious garbled patterns
-  const veryBadPatterns = [
-    /[حخ]{3,}/,  // 3+ consecutive similar letters
-    /[زمن]{3,}/,
-    /[تث]{3,}/,
-    /[\u0600-\u06FF]{2}[^اويةأإآىئؤ\s]{8,}[\u0600-\u06FF]{2}/ // Long sequence without vowels
-  ];
-  
-  for (const pattern of veryBadPatterns) {
-    if (pattern.test(text)) {
-      return true;
+async function cleanupQuestions(questions, requestId) {
+  try {
+    if (!questions || questions.length === 0) return [];
+    
+    console.log(`🧹 [PASS 2] Cleaning ${questions.length} questions...`);
+    updateProgress(requestId, 70, `المرحلة 2: تنظيف ${questions.length} سؤال...`);
+    
+    // Process in batches of 30
+    const BATCH_SIZE = 30;
+    const cleaned = [];
+    
+    for (let i = 0; i < questions.length; i += BATCH_SIZE) {
+      const batch = questions.slice(i, i + BATCH_SIZE);
+      const progress = 70 + Math.round((i / questions.length) * 20);
+      updateProgress(requestId, progress, `تنظيف... (${i + 1}-${Math.min(i + BATCH_SIZE, questions.length)}/${questions.length})`);
+      
+      const completion = await openai.chat.completions.create({
+        model: OPENAI_MODEL,
+        messages: [
+          {
+            role: 'system',
+            content: 'أنت خبير في تصحيح الأخطاء الإملائية والترميز في النصوص العربية.'
+          },
+          {
+            role: 'user',
+            content: `${CLEANUP_PROMPT}\n\n${JSON.stringify(batch, null, 2)}`
+          }
+        ],
+        temperature: 0.2,
+        max_tokens: 16000
+      });
+
+      const response = completion.choices[0].message.content;
+      
+      try {
+        let clean = response.trim()
+          .replace(/^```json\s*/i, '')
+          .replace(/^```\s*/i, '')
+          .replace(/\s*```$/i, '')
+          .trim();
+        
+        const parsed = JSON.parse(clean);
+        const batchCleaned = Array.isArray(parsed) ? parsed : (parsed.questions || []);
+        cleaned.push(...batchCleaned);
+        
+        console.log(`✅ [PASS 2] Cleaned batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batchCleaned.length} questions`);
+      } catch (e) {
+        console.error(`⚠️ [PASS 2] Batch ${Math.floor(i / BATCH_SIZE) + 1} cleanup failed, keeping original`);
+        cleaned.push(...batch);
+      }
+      
+      if (i + BATCH_SIZE < questions.length) {
+        await new Promise(r => setTimeout(r, 800));
+      }
     }
+    
+    console.log(`✅ [PASS 2] Total cleaned: ${cleaned.length} questions`);
+    return cleaned;
+    
+  } catch (error) {
+    console.error('Pass 2 error:', error);
+    return questions; // Return original if cleanup fails
   }
-  
-  // Check if text is mostly non-Arabic
-  const cleanText = text.replace(/[\s\d]/g, '');
-  if (cleanText.length < 3) return false;
-  
-  const arabicChars = (cleanText.match(/[\u0600-\u06FF]/g) || []).length;
-  const arabicRatio = arabicChars / cleanText.length;
-  
-  // Only reject if very low Arabic ratio
-  if (arabicRatio < 0.4) {
-    return true;
-  }
-  
-  return false;
 }
 
-function validateBalanced(questions) {
-  if (!Array.isArray(questions)) {
-    return { valid: [], rejected: 0 };
-  }
+// ====================================
+// Simple Validation - Only structure
+// ====================================
 
-  let rejected = 0;
-  const valid = questions.filter(q => {
-    // Basic structure check
-    if (!q.question || typeof q.question !== 'string' || q.question.trim().length < 5) {
-      rejected++;
+function simpleValidate(questions) {
+  if (!Array.isArray(questions)) return [];
+
+  return questions.filter(q => {
+    if (!q.question || typeof q.question !== 'string' || q.question.trim().length < 3) {
       return false;
     }
     
     if (!Array.isArray(q.options) || q.options.length < 2) {
-      rejected++;
       return false;
     }
     
     if (typeof q.correct !== 'number' || q.correct < 0 || q.correct >= q.options.length) {
-      rejected++;
       return false;
     }
     
-    // Only reject VERY obvious garbled text
-    if (hasObviousGarbled(q.question)) {
-      console.log(`🚫 Rejected very garbled question: "${q.question.substring(0, 50)}"`);
-      rejected++;
-      return false;
-    }
-    
-    // Check options - only very bad ones
-    let badOptions = 0;
-    for (const opt of q.options) {
-      if (!opt || typeof opt !== 'string' || opt.trim().length < 1) {
-        badOptions++;
-      } else if (hasObviousGarbled(opt)) {
-        badOptions++;
-      }
-    }
-    
-    if (badOptions > q.options.length / 2) {
-      console.log(`🚫 Rejected question with too many bad options`);
-      rejected++;
-      return false;
-    }
-    
-    // Clean
     q.question = q.question.trim();
     q.options = q.options.map(o => String(o).trim());
     if (q.chapter) q.chapter = String(q.chapter).trim();
     
     return true;
   });
-
-  if (rejected > 0) {
-    console.log(`⚠️ Validation: ${valid.length} accepted, ${rejected} rejected`);
-  }
-
-  return { valid, rejected };
 }
 
 // ====================================
@@ -366,7 +367,7 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Running',
     model: OPENAI_MODEL,
-    version: '4.4-BALANCED'
+    version: '4.5-TWOPASS'
   });
 });
 
@@ -384,14 +385,14 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 V4.4 BALANCED [${reqId}]`);
+    console.log(`🚀 V4.5 TWO-PASS [${reqId}]`);
     console.log(`📄 ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
     updateProgress(reqId, 10, 'رفع الملف...');
     await new Promise(r => setTimeout(r, 300));
     
-    updateProgress(reqId, 30, 'استخراج النص...');
+    updateProgress(reqId, 25, 'استخراج النص...');
     const text = await extractTextFromPDF(req.file.buffer);
     
     if (!text || text.length < 100) {
@@ -404,10 +405,11 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
 
     console.log(`📝 Extracted ${text.length} characters`);
 
-    updateProgress(reqId, 45, 'استخراج وتصحيح الأسئلة...');
-    const questions = await extractAllQuestionsParallel(text, reqId);
+    // PASS 1: Extract everything
+    updateProgress(reqId, 35, 'المرحلة 1: استخراج جميع الأسئلة...');
+    const rawQuestions = await pass1ExtractAll(text, reqId);
 
-    if (!questions || questions.length === 0) {
+    if (!rawQuestions || rawQuestions.length === 0) {
       clearProgress(reqId);
       return res.status(400).json({
         success: false,
@@ -415,13 +417,19 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       });
     }
 
+    console.log(`📊 Extracted ${rawQuestions.length} raw questions`);
+
+    // PASS 2: Clean up
+    updateProgress(reqId, 65, 'المرحلة 2: تنظيف النصوص...');
+    const cleanQuestions = await cleanupQuestions(rawQuestions, requestId);
+
     updateProgress(reqId, 95, 'إنهاء...');
     
-    const chapters = [...new Set(questions.map(q => q.chapter).filter(Boolean))];
+    const chapters = [...new Set(cleanQuestions.map(q => q.chapter).filter(Boolean))];
     const time = ((Date.now() - start) / 1000).toFixed(2);
     
     console.log(`${'='.repeat(60)}`);
-    console.log(`✅ SUCCESS: ${questions.length} questions in ${time}s`);
+    console.log(`✅ SUCCESS: ${cleanQuestions.length} clean questions in ${time}s`);
     console.log(`${'='.repeat(60)}\n`);
 
     updateProgress(reqId, 100, 'تم! ✅');
@@ -430,9 +438,9 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     res.json({
       success: true,
       requestId: reqId,
-      totalQuestions: questions.length,
+      totalQuestions: cleanQuestions.length,
       chapters: chapters,
-      questions: questions,
+      questions: cleanQuestions,
       processingTime: `${time}s`
     });
 
@@ -465,15 +473,14 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 AI Quiz System V4.4 BALANCED');
+  console.log('🚀 AI Quiz System V4.5 TWO-PASS');
   console.log('='.repeat(60));
   console.log(`📡 Port: ${PORT}`);
   console.log(`🤖 Model: ${OPENAI_MODEL}`);
-  console.log('✨ Features:');
-  console.log('   - Balanced approach: Clean + Comprehensive');
-  console.log('   - Mild correction (not too aggressive)');
-  console.log('   - Reasonable validation (not too strict)');
-  console.log('   - Best quality/quantity ratio');
+  console.log('✨ Strategy:');
+  console.log('   PASS 1: Extract ALL questions (like V4.1)');
+  console.log('   PASS 2: Clean up garbled text');
+  console.log('   Result: High count + Clean text!');
   console.log('='.repeat(60) + '\n');
 });
 
