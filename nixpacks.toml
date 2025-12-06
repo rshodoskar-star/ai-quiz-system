@@ -1,11 +1,5 @@
-[phases.setup]
-aptPkgs = ["poppler-utils", "graphicsmagick"]
-
 [phases.install]
 cmds = ["npm install"]
-
-[phases.build]
-cmds = ["echo 'Build complete'"]
 
 [start]
 cmd = "npm start"
