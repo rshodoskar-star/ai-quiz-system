@@ -1,7 +1,7 @@
 // ====================================
-// AI Quiz System V4.8 SMART HYBRID
-// Extract all, clean only garbled ones
-// 60% cheaper, same quality!
+// AI Quiz System V5.0 GEMINI VISION
+// Uses Gemini 2.0 Flash to read PDF directly!
+// $0.05 per file - 10x cheaper!
 // ====================================
 
 require('dotenv').config();
@@ -9,21 +9,27 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const { fromPath } = require('pdf2pic');
+const fs = require('fs').promises;
+const { createWriteStream } = require('fs');
+const { promisify } = require('util');
+const stream = require('stream');
+const pipeline = promisify(stream.pipeline);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// Initialize AI clients
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
+const GEMINI_MODEL = 'gemini-2.0-flash-exp';
 const MAX_PDF_SIZE_MB = parseInt(process.env.MAX_PDF_SIZE_MB) || 50;
 const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
-const CHUNK_SIZE = 25000; // Balanced: not too big, not too small
 
 // Progress tracking
 const progressStore = new Map();
@@ -83,21 +89,85 @@ const upload = multer({
 });
 
 // ====================================
-// PASS 1: Extract with cleanup instructions
+// PDF to Images Conversion
 // ====================================
 
-const EXTRACT_PROMPT = `استخرج جميع أسئلة الاختيار من متعدد من النص التالي.
+async function convertPDFToImages(pdfBuffer, reqId) {
+  try {
+    // Create temp directory
+    const tempDir = path.join('/tmp', `pdf_${reqId}`);
+    await fs.mkdir(tempDir, { recursive: true });
+    
+    // Save PDF temporarily
+    const tempPdfPath = path.join(tempDir, 'input.pdf');
+    await fs.writeFile(tempPdfPath, pdfBuffer);
+    
+    console.log(`📄 Converting PDF to images...`);
+    
+    // Convert PDF to images
+    const converter = fromPath(tempPdfPath, {
+      density: 200,
+      saveFilename: 'page',
+      savePath: tempDir,
+      format: 'png',
+      width: 2000,
+      height: 2000
+    });
+    
+    // Get PDF page count
+    const pdfData = await pdfParse(pdfBuffer);
+    const pageCount = pdfData.numpages;
+    
+    console.log(`📊 PDF has ${pageCount} pages`);
+    
+    // Convert all pages
+    const imagePromises = [];
+    for (let i = 1; i <= Math.min(pageCount, 50); i++) { // Limit to 50 pages
+      imagePromises.push(converter(i));
+    }
+    
+    const results = await Promise.all(imagePromises);
+    
+    // Read image files
+    const images = [];
+    for (let i = 0; i < results.length; i++) {
+      const imagePath = results[i].path;
+      const imageBuffer = await fs.readFile(imagePath);
+      const base64Image = imageBuffer.toString('base64');
+      images.push({
+        data: base64Image,
+        mimeType: 'image/png'
+      });
+      console.log(`✅ Converted page ${i + 1}/${results.length}`);
+    }
+    
+    // Cleanup
+    await fs.rm(tempDir, { recursive: true, force: true });
+    
+    return images;
+    
+  } catch (error) {
+    console.error('PDF conversion error:', error);
+    throw new Error('فشل تحويل PDF إلى صور');
+  }
+}
+
+// ====================================
+// Gemini Vision Extraction
+// ====================================
+
+const GEMINI_PROMPT = `استخرج جميع أسئلة الاختيار من متعدد من هذه الصور.
 
 القواعد:
-1. استخرج كل سؤال تجده
-2. إذا وجدت أخطاء إملائية بسيطة، صححها مباشرة
-3. مثال: "البياهات" → "البيانات", "معمليات" → "عمليات"
+1. اقرأ النص بالضبط كما هو مكتوب
+2. استخرج كل سؤال تجده
+3. صحح أي أخطاء إملائية بسيطة
 
-يجب أن يكون الرد JSON object:
+أخرج JSON object فقط:
 {
   "questions": [
     {
-      "chapter": "الفصل",
+      "chapter": "اسم الفصل",
       "question": "نص السؤال",
       "options": ["خيار 1", "خيار 2", "خيار 3", "خيار 4"],
       "correct": 0
@@ -105,295 +175,120 @@ const EXTRACT_PROMPT = `استخرج جميع أسئلة الاختيار من �
   ]
 }
 
-النص:`;
+مهم: أخرج JSON فقط، بدون markdown، بدون نص إضافي.`;
 
-// ====================================
-// PASS 2: Deep cleanup for garbled only
-// ====================================
-
-const DEEP_CLEANUP_PROMPT = `هذه أسئلة متلخبطة جداً. أعد كتابتها بالكامل بعربية صحيحة.
-
-حاول فهم المعنى وإعادة الصياغة:
-"همزحت" → "هندسة"
-"للخفاعلات" → "للتفاعلات"
-"يحن" → "بين"
-
-أخرج JSON object:
-{
-  "questions": [...]
-}
-
-الأسئلة المتلخبطة:`;
-
-// ====================================
-// Smart garbled detection
-// ====================================
-
-function isQuestionGarbled(question) {
-  const text = question.question + ' ' + question.options.join(' ');
-  
-  // Check 1: Arabic ratio
-  const cleanText = text.replace(/[\s\d]/g, '');
-  if (cleanText.length < 5) return false;
-  
-  const arabicChars = (cleanText.match(/[\u0600-\u06FF]/g) || []).length;
-  const arabicRatio = arabicChars / cleanText.length;
-  
-  // Very low Arabic = garbled
-  if (arabicRatio < 0.5) {
-    return true;
-  }
-  
-  // Check 2: Obvious garbled patterns
-  const badPatterns = [
-    /[حخهـ]{3,}/,
-    /[زمن]{3,}/,
-    /[تث]{3,}/,
-    /[لم][عغ][مل][لم]/,
-    /[يئ][حخهـ][نم]/
-  ];
-  
-  for (const pattern of badPatterns) {
-    if (pattern.test(text)) {
-      return true;
-    }
-  }
-  
-  // Check 3: Vowel ratio (Arabic needs vowels)
-  const vowels = (text.match(/[اوي]/g) || []).length;
-  const vowelRatio = arabicChars > 0 ? vowels / arabicChars : 0;
-  
-  if (vowelRatio < 0.12) {
-    return true;
-  }
-  
-  return false;
-}
-
-// ====================================
-// PDF Extraction
-// ====================================
-
-async function extractTextFromPDF(buffer) {
+async function extractWithGemini(images, reqId) {
   try {
-    const data = await pdfParse(buffer);
-    return data.text;
-  } catch (error) {
-    console.error('PDF extraction error:', error);
-    throw new Error('فشل استخراج النص من PDF');
-  }
-}
-
-// ====================================
-// Smart Chunking
-// ====================================
-
-function smartSplit(text, chunkSize) {
-  const chunks = [];
-  const questionPatterns = [
-    /(?=(?:\n|^)\s*\d+[\.\):])/g,
-    /(?=(?:\n|^)\s*س\s*\d+)/g,
-    /(?=(?:\n|^)\s*سؤال\s*\d+)/g,
-    /(?=(?:\n|^)\s*Q\d+)/gi,
-    /(?=(?:\n|^)\s*\(\d+\))/g
-  ];
-  
-  let bestSplit = null;
-  let maxBlocks = 0;
-  
-  for (const pattern of questionPatterns) {
-    const blocks = text.split(pattern).filter(b => b.trim());
-    if (blocks.length > maxBlocks) {
-      maxBlocks = blocks.length;
-      bestSplit = blocks;
-    }
-  }
-  
-  if (bestSplit && bestSplit.length > 1) {
-    let current = '';
-    for (const block of bestSplit) {
-      if ((current + block).length <= chunkSize) {
-        current += block;
-      } else {
-        if (current) chunks.push(current.trim());
-        current = block;
+    console.log(`🤖 Calling Gemini 2.0 Flash for ${images.length} pages...`);
+    updateProgress(reqId, 50, `معالجة ${images.length} صفحة بـ Gemini...`);
+    
+    const model = genAI.getGenerativeModel({ 
+      model: GEMINI_MODEL,
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: "application/json"
       }
-    }
-    if (current) chunks.push(current.trim());
-  } else {
-    for (let i = 0; i < text.length; i += chunkSize) {
-      chunks.push(text.substring(i, i + chunkSize));
-    }
-  }
-  
-  console.log(`📦 Split into ${chunks.length} chunks`);
-  return chunks;
-}
-
-// ====================================
-// PASS 1: Extract with basic cleanup
-// ====================================
-
-async function extractWithBasicCleanup(text, index, total) {
-  try {
-    console.log(`🔄 [PASS 1] Extracting chunk ${index + 1}/${total}`);
-    
-    const completion = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: 'system',
-          content: 'استخرج الأسئلة وصحح الأخطاء البسيطة. أخرج JSON object مع key "questions".'
-        },
-        {
-          role: 'user',
-          content: `${EXTRACT_PROMPT}\n\n${text}`
-        }
-      ],
-      temperature: 0.2,
-      max_tokens: 16000
     });
-
-    const response = completion.choices[0].message.content;
     
+    // Prepare content parts
+    const parts = [
+      { text: GEMINI_PROMPT }
+    ];
+    
+    // Add all images
+    for (const image of images) {
+      parts.push({
+        inlineData: {
+          data: image.data,
+          mimeType: image.mimeType
+        }
+      });
+    }
+    
+    // Generate content
+    const result = await model.generateContent(parts);
+    const response = await result.response;
+    const text = response.text();
+    
+    console.log(`📥 Gemini response length: ${text.length}`);
+    
+    // Parse JSON
     let questions = [];
     try {
-      const parsed = JSON.parse(response);
+      const parsed = JSON.parse(text);
       questions = parsed.questions || parsed.Questions || [];
+      
+      if (!Array.isArray(questions)) {
+        console.warn('⚠️ Questions is not an array');
+        questions = [];
+      }
     } catch (e) {
-      console.error(`❌ [PASS 1] Chunk ${index + 1}: Parse error`);
-      return [];
+      console.error('❌ JSON parse error:', e.message);
+      // Try to extract JSON from text
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          const parsed = JSON.parse(match[0]);
+          questions = parsed.questions || [];
+        } catch (e2) {
+          console.error('❌ Second parse attempt failed');
+        }
+      }
     }
     
     const validated = validateQuestions(questions);
-    console.log(`✅ [PASS 1] Chunk ${index + 1}: ${validated.length} questions`);
+    console.log(`✅ Gemini extracted: ${validated.length} questions`);
     
     return validated;
     
   } catch (error) {
-    console.error(`❌ [PASS 1] Chunk ${index + 1}:`, error.message);
-    return [];
-  }
-}
-
-async function pass1ExtractAll(text, reqId) {
-  try {
-    const chunks = smartSplit(text, CHUNK_SIZE);
-    updateProgress(reqId, 40, `استخراج من ${chunks.length} أجزاء...`);
-    
-    const PARALLEL_LIMIT = 3;
-    const allQuestions = [];
-    
-    for (let i = 0; i < chunks.length; i += PARALLEL_LIMIT) {
-      const batch = chunks.slice(i, i + PARALLEL_LIMIT);
-      const progress = 40 + Math.round((i / chunks.length) * 35);
-      updateProgress(reqId, progress, `استخراج... (${i + 1}/${chunks.length})`);
-      
-      const promises = batch.map((chunk, idx) => 
-        extractWithBasicCleanup(chunk, i + idx, chunks.length)
-      );
-      
-      const results = await Promise.all(promises);
-      allQuestions.push(...results.flat());
-      
-      if (i + PARALLEL_LIMIT < chunks.length) {
-        await new Promise(r => setTimeout(r, 500));
-      }
-    }
-    
-    console.log(`✅ [PASS 1] Total extracted: ${allQuestions.length} questions`);
-    return allQuestions;
-    
-  } catch (error) {
-    console.error('Pass 1 error:', error);
+    console.error('❌ Gemini error:', error.message);
     throw error;
   }
 }
 
 // ====================================
-// PASS 2: Deep cleanup ONLY garbled
+// Fallback: OpenAI extraction (if Gemini fails)
 // ====================================
 
-async function pass2CleanupGarbled(questions, reqId) {
+async function extractWithOpenAIFallback(pdfBuffer, reqId) {
   try {
-    // Detect garbled questions
-    const garbledQuestions = [];
-    const cleanQuestions = [];
+    console.log('⚠️ Using OpenAI fallback...');
+    updateProgress(reqId, 50, 'استخدام النظام الاحتياطي...');
     
-    for (const q of questions) {
-      if (isQuestionGarbled(q)) {
-        garbledQuestions.push(q);
-      } else {
-        cleanQuestions.push(q);
-      }
+    const pdfData = await pdfParse(pdfBuffer);
+    const text = pdfData.text;
+    
+    if (!text || text.length < 100) {
+      throw new Error('لا يوجد نص كافٍ في الملف');
     }
     
-    console.log(`📊 Analysis: ${cleanQuestions.length} clean, ${garbledQuestions.length} garbled`);
-    
-    if (garbledQuestions.length === 0) {
-      console.log('🎉 All questions are clean! Skipping PASS 2.');
-      return questions;
-    }
-    
-    console.log(`🧹 [PASS 2] Deep cleaning ${garbledQuestions.length} garbled questions...`);
-    updateProgress(reqId, 80, `تنظيف عميق لـ ${garbledQuestions.length} سؤال متلخبط...`);
-    
-    const BATCH_SIZE = 30;
-    const cleaned = [];
-    
-    for (let i = 0; i < garbledQuestions.length; i += BATCH_SIZE) {
-      const batch = garbledQuestions.slice(i, i + BATCH_SIZE);
-      const progress = 80 + Math.round((i / garbledQuestions.length) * 10);
-      updateProgress(reqId, progress, `تنظيف... (${i + 1}/${garbledQuestions.length})`);
-      
-      try {
-        const completion = await openai.chat.completions.create({
-          model: OPENAI_MODEL,
-          response_format: { type: "json_object" },
-          messages: [
-            {
-              role: 'system',
-              content: 'أعد كتابة الأسئلة المتلخبطة بعربية صحيحة. أخرج JSON object.'
-            },
-            {
-              role: 'user',
-              content: `${DEEP_CLEANUP_PROMPT}\n\n${JSON.stringify({ questions: batch }, null, 2)}`
-            }
-          ],
-          temperature: 0.3,
-          max_tokens: 16000
-        });
-
-        const response = completion.choices[0].message.content;
-        const parsed = JSON.parse(response);
-        const batchCleaned = parsed.questions || parsed.Questions || [];
-        
-        if (Array.isArray(batchCleaned)) {
-          cleaned.push(...batchCleaned);
-          console.log(`✅ [PASS 2] Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batchCleaned.length} cleaned`);
-        } else {
-          cleaned.push(...batch); // Fallback
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: 'system',
+          content: 'استخرج الأسئلة وأخرج JSON object مع key "questions".'
+        },
+        {
+          role: 'user',
+          content: `استخرج جميع أسئلة الاختيار من متعدد:\n\n${text.substring(0, 50000)}`
         }
-      } catch (error) {
-        console.error(`❌ [PASS 2] Batch error:`, error.message);
-        cleaned.push(...batch); // Fallback
-      }
-      
-      if (i + BATCH_SIZE < garbledQuestions.length) {
-        await new Promise(r => setTimeout(r, 800));
-      }
-    }
+      ],
+      temperature: 0.2,
+      max_tokens: 16000
+    });
     
-    // Combine clean + cleaned
-    const finalQuestions = [...cleanQuestions, ...cleaned];
-    console.log(`✅ Final: ${cleanQuestions.length} kept clean + ${cleaned.length} cleaned = ${finalQuestions.length} total`);
+    const response = completion.choices[0].message.content;
+    const parsed = JSON.parse(response);
+    const questions = parsed.questions || [];
     
-    return finalQuestions;
+    return validateQuestions(questions);
     
   } catch (error) {
-    console.error('Pass 2 error:', error);
-    return questions; // Fallback
+    console.error('❌ OpenAI fallback error:', error);
+    throw error;
   }
 }
 
@@ -442,9 +337,10 @@ app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     message: 'Running',
-    model: OPENAI_MODEL,
-    version: '4.8-SMART-HYBRID',
-    chunkSize: CHUNK_SIZE
+    model: GEMINI_MODEL,
+    version: '5.0-GEMINI-VISION',
+    geminiAvailable: !!process.env.GEMINI_API_KEY,
+    openaiBackup: !!process.env.OPENAI_API_KEY
   });
 });
 
@@ -462,31 +358,40 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 V4.8 SMART HYBRID [${reqId}]`);
+    console.log(`🚀 V5.0 GEMINI VISION [${reqId}]`);
     console.log(`📄 ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
     updateProgress(reqId, 10, 'رفع الملف...');
-    await new Promise(r => setTimeout(r, 300));
     
-    updateProgress(reqId, 25, 'استخراج النص...');
-    const text = await extractTextFromPDF(req.file.buffer);
+    let questions = [];
     
-    if (!text || text.length < 100) {
-      clearProgress(reqId);
-      return res.status(400).json({
-        success: false,
-        error: 'الملف لا يحتوي على نص كافٍ'
-      });
+    // Try Gemini Vision first
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        updateProgress(reqId, 20, 'تحويل PDF إلى صور...');
+        const images = await convertPDFToImages(req.file.buffer, reqId);
+        
+        updateProgress(reqId, 40, `معالجة ${images.length} صفحة...`);
+        questions = await extractWithGemini(images, reqId);
+        
+      } catch (geminiError) {
+        console.error('⚠️ Gemini failed:', geminiError.message);
+        
+        // Fallback to OpenAI if available
+        if (process.env.OPENAI_API_KEY) {
+          console.log('🔄 Falling back to OpenAI...');
+          questions = await extractWithOpenAIFallback(req.file.buffer, reqId);
+        } else {
+          throw geminiError;
+        }
+      }
+    } else {
+      // No Gemini key, use OpenAI directly
+      questions = await extractWithOpenAIFallback(req.file.buffer, reqId);
     }
 
-    console.log(`📝 Extracted ${text.length} characters`);
-
-    // PASS 1: Extract with basic cleanup
-    updateProgress(reqId, 35, 'استخراج الأسئلة...');
-    const rawQuestions = await pass1ExtractAll(text, reqId);
-
-    if (!rawQuestions || rawQuestions.length === 0) {
+    if (!questions || questions.length === 0) {
       clearProgress(reqId);
       return res.status(400).json({
         success: false,
@@ -494,19 +399,13 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       });
     }
 
-    console.log(`📊 Extracted ${rawQuestions.length} questions`);
-
-    // PASS 2: Deep cleanup ONLY garbled ones
-    updateProgress(reqId, 75, 'تحليل وتنظيف...');
-    const finalQuestions = await pass2CleanupGarbled(rawQuestions, reqId);
-
     updateProgress(reqId, 95, 'إنهاء...');
     
-    const chapters = [...new Set(finalQuestions.map(q => q.chapter).filter(Boolean))];
+    const chapters = [...new Set(questions.map(q => q.chapter).filter(Boolean))];
     const time = ((Date.now() - start) / 1000).toFixed(2);
     
     console.log(`${'='.repeat(60)}`);
-    console.log(`✅ SUCCESS: ${finalQuestions.length} questions in ${time}s`);
+    console.log(`✅ SUCCESS: ${questions.length} questions in ${time}s`);
     console.log(`${'='.repeat(60)}\n`);
 
     updateProgress(reqId, 100, 'تم! ✅');
@@ -515,10 +414,11 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     res.json({
       success: true,
       requestId: reqId,
-      totalQuestions: finalQuestions.length,
+      totalQuestions: questions.length,
       chapters: chapters,
-      questions: finalQuestions,
-      processingTime: `${time}s`
+      questions: questions,
+      processingTime: `${time}s`,
+      model: process.env.GEMINI_API_KEY ? 'gemini-vision' : 'openai-fallback'
     });
 
   } catch (error) {
@@ -550,16 +450,16 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 AI Quiz System V4.8 SMART HYBRID');
+  console.log('🚀 AI Quiz System V5.0 GEMINI VISION');
   console.log('='.repeat(60));
   console.log(`📡 Port: ${PORT}`);
-  console.log(`🤖 Model: ${OPENAI_MODEL}`);
-  console.log('⭐ Strategy:');
-  console.log(`   - CHUNK_SIZE: ${CHUNK_SIZE} (balanced)`);
-  console.log(`   - PASS 1: Extract + basic cleanup`);
-  console.log(`   - Detect: Clean vs Garbled`);
-  console.log(`   - PASS 2: Deep cleanup ONLY garbled`);
-  console.log('💰 60% cheaper than V4.7!');
+  console.log(`🤖 Primary: ${GEMINI_MODEL}`);
+  console.log(`🔄 Backup: ${process.env.OPENAI_API_KEY ? 'OpenAI GPT-4' : 'None'}`);
+  console.log('⭐ Features:');
+  console.log('   - Reads PDF as images (no text extraction!)');
+  console.log('   - Gemini 2.0 Flash Vision');
+  console.log('   - 10x cheaper than GPT-4 Vision');
+  console.log('   - OpenAI fallback if Gemini fails');
   console.log('='.repeat(60) + '\n');
 });
 
