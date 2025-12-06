@@ -1,8 +1,6 @@
 // ====================================
-// AI Quiz System V4.5 TWO-PASS
-// Pass 1: Extract ALL questions (like V4.1)
-// Pass 2: Clean up garbled text
-// Best of both worlds!
+// AI Quiz System V4.6 FIXED
+// Fixes: requestId typo + Better JSON parsing
 // ====================================
 
 require('dotenv').config();
@@ -95,7 +93,7 @@ const EXTRACT_ALL_PROMPT = `استخرج جميع أسئلة الاختيار م
 3. لا تحاول التصحيح الآن
 4. فقط استخرج
 
-JSON Array:
+JSON Array فقط - بدون أي نص إضافي:
 [
   {
     "chapter": "الفصل",
@@ -104,6 +102,8 @@ JSON Array:
     "correct": 0
   }
 ]
+
+مهم جداً: أخرج JSON فقط، بدون markdown، بدون تعليقات، بدون نص إضافي.
 
 النص:`;
 
@@ -122,7 +122,68 @@ const CLEANUP_PROMPT = `أعد كتابة الأسئلة التالية بعرب
 
 إذا السؤال واضح، اتركه كما هو.
 
-أخرج نفس الصيغة - JSON Array:`;
+أخرج نفس الصيغة - JSON Array فقط بدون أي نص إضافي:`;
+
+// ====================================
+// IMPROVED JSON Parsing
+// ====================================
+
+function parseJSONRobust(text) {
+  // Try multiple parsing strategies
+  
+  // Strategy 1: Direct parse
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    // Continue to next strategy
+  }
+  
+  // Strategy 2: Remove markdown
+  try {
+    let clean = text.trim()
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    return JSON.parse(clean);
+  } catch (e) {
+    // Continue
+  }
+  
+  // Strategy 3: Extract array with regex
+  try {
+    const match = text.match(/\[[\s\S]*\]/);
+    if (match) {
+      return JSON.parse(match[0]);
+    }
+  } catch (e) {
+    // Continue
+  }
+  
+  // Strategy 4: Find first [ and last ]
+  try {
+    const firstBracket = text.indexOf('[');
+    const lastBracket = text.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+      const jsonStr = text.substring(firstBracket, lastBracket + 1);
+      return JSON.parse(jsonStr);
+    }
+  } catch (e) {
+    // Continue
+  }
+  
+  // Strategy 5: Remove common prefixes/suffixes
+  try {
+    let cleaned = text
+      .replace(/^.*?(\[)/s, '$1')  // Remove everything before first [
+      .replace(/(\]).*?$/s, '$1'); // Remove everything after last ]
+    return JSON.parse(cleaned);
+  } catch (e) {
+    // All strategies failed
+  }
+  
+  return null;
+}
 
 // ====================================
 // PDF Extraction
@@ -181,7 +242,7 @@ async function extractEverything(text, index, total) {
       messages: [
         {
           role: 'system',
-          content: 'استخرج كل أسئلة الاختيار من متعدد. لا تصحح شيئاً - فقط استخرج كما هو.'
+          content: 'استخرج كل أسئلة الاختيار من متعدد. أخرج JSON Array فقط بدون أي نص إضافي.'
         },
         {
           role: 'user',
@@ -193,44 +254,33 @@ async function extractEverything(text, index, total) {
     });
 
     const response = completion.choices[0].message.content;
+    console.log(`📥 [PASS 1] Chunk ${index + 1} response: ${response.substring(0, 100)}...`);
     
-    let questions = [];
-    try {
-      let clean = response.trim()
-        .replace(/^```json\s*/i, '')
-        .replace(/^```\s*/i, '')
-        .replace(/\s*```$/i, '')
-        .trim();
-      
-      const parsed = JSON.parse(clean);
-      questions = Array.isArray(parsed) ? parsed : (parsed.questions || []);
-    } catch (e) {
-      const match = response.match(/\[[\s\S]*\]/);
-      if (match) {
-        try {
-          questions = JSON.parse(match[0]);
-        } catch (e2) {
-          console.error(`Chunk ${index + 1}: Parse failed`);
-        }
-      }
+    // Use robust parsing
+    const parsed = parseJSONRobust(response);
+    
+    if (!parsed) {
+      console.error(`❌ [PASS 1] Chunk ${index + 1}: All parse strategies failed`);
+      return [];
     }
-
-    const validated = simpleValidate(questions);
-    console.log(`✅ [PASS 1] Chunk ${index + 1}: ${validated.length} questions`);
     
+    const questions = Array.isArray(parsed) ? parsed : (parsed.questions || []);
+    const validated = simpleValidate(questions);
+    
+    console.log(`✅ [PASS 1] Chunk ${index + 1}: ${validated.length} questions`);
     return validated;
     
   } catch (error) {
-    console.error(`❌ Chunk ${index + 1}:`, error.message);
+    console.error(`❌ [PASS 1] Chunk ${index + 1}:`, error.message);
     return [];
   }
 }
 
-async function pass1ExtractAll(text, requestId) {
+async function pass1ExtractAll(text, reqId) {
   try {
     const chunks = smartSplit(text, CHUNK_SIZE);
     
-    updateProgress(requestId, 40, `المرحلة 1: استخراج من ${chunks.length} أجزاء...`);
+    updateProgress(reqId, 40, `المرحلة 1: استخراج من ${chunks.length} أجزاء...`);
     
     const PARALLEL_LIMIT = 3;
     const allQuestions = [];
@@ -238,7 +288,7 @@ async function pass1ExtractAll(text, requestId) {
     for (let i = 0; i < chunks.length; i += PARALLEL_LIMIT) {
       const batch = chunks.slice(i, i + PARALLEL_LIMIT);
       const progress = 40 + Math.round((i / chunks.length) * 25);
-      updateProgress(requestId, progress, `استخراج... (${i + 1}-${Math.min(i + PARALLEL_LIMIT, chunks.length)}/${chunks.length})`);
+      updateProgress(reqId, progress, `استخراج... (${i + 1}-${Math.min(i + PARALLEL_LIMIT, chunks.length)}/${chunks.length})`);
       
       const promises = batch.map((chunk, idx) => 
         extractEverything(chunk, i + idx, chunks.length)
@@ -265,12 +315,15 @@ async function pass1ExtractAll(text, requestId) {
 // PASS 2: Clean up
 // ====================================
 
-async function cleanupQuestions(questions, requestId) {
+async function cleanupQuestions(questions, reqId) {
   try {
-    if (!questions || questions.length === 0) return [];
+    if (!questions || questions.length === 0) {
+      console.log('⚠️ [PASS 2] No questions to clean');
+      return [];
+    }
     
     console.log(`🧹 [PASS 2] Cleaning ${questions.length} questions...`);
-    updateProgress(requestId, 70, `المرحلة 2: تنظيف ${questions.length} سؤال...`);
+    updateProgress(reqId, 70, `المرحلة 2: تنظيف ${questions.length} سؤال...`);
     
     // Process in batches of 30
     const BATCH_SIZE = 30;
@@ -279,41 +332,41 @@ async function cleanupQuestions(questions, requestId) {
     for (let i = 0; i < questions.length; i += BATCH_SIZE) {
       const batch = questions.slice(i, i + BATCH_SIZE);
       const progress = 70 + Math.round((i / questions.length) * 20);
-      updateProgress(requestId, progress, `تنظيف... (${i + 1}-${Math.min(i + BATCH_SIZE, questions.length)}/${questions.length})`);
-      
-      const completion = await openai.chat.completions.create({
-        model: OPENAI_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content: 'أنت خبير في تصحيح الأخطاء الإملائية والترميز في النصوص العربية.'
-          },
-          {
-            role: 'user',
-            content: `${CLEANUP_PROMPT}\n\n${JSON.stringify(batch, null, 2)}`
-          }
-        ],
-        temperature: 0.2,
-        max_tokens: 16000
-      });
-
-      const response = completion.choices[0].message.content;
+      updateProgress(reqId, progress, `تنظيف... (${i + 1}-${Math.min(i + BATCH_SIZE, questions.length)}/${questions.length})`);
       
       try {
-        let clean = response.trim()
-          .replace(/^```json\s*/i, '')
-          .replace(/^```\s*/i, '')
-          .replace(/\s*```$/i, '')
-          .trim();
+        const completion = await openai.chat.completions.create({
+          model: OPENAI_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content: 'أنت خبير في تصحيح الأخطاء الإملائية والترميز في النصوص العربية. أخرج JSON فقط.'
+            },
+            {
+              role: 'user',
+              content: `${CLEANUP_PROMPT}\n\n${JSON.stringify(batch, null, 2)}`
+            }
+          ],
+          temperature: 0.2,
+          max_tokens: 16000
+        });
+
+        const response = completion.choices[0].message.content;
         
-        const parsed = JSON.parse(clean);
-        const batchCleaned = Array.isArray(parsed) ? parsed : (parsed.questions || []);
-        cleaned.push(...batchCleaned);
+        // Use robust parsing
+        const parsed = parseJSONRobust(response);
         
-        console.log(`✅ [PASS 2] Cleaned batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batchCleaned.length} questions`);
-      } catch (e) {
-        console.error(`⚠️ [PASS 2] Batch ${Math.floor(i / BATCH_SIZE) + 1} cleanup failed, keeping original`);
-        cleaned.push(...batch);
+        if (parsed) {
+          const batchCleaned = Array.isArray(parsed) ? parsed : (parsed.questions || []);
+          cleaned.push(...batchCleaned);
+          console.log(`✅ [PASS 2] Cleaned batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batchCleaned.length} questions`);
+        } else {
+          console.warn(`⚠️ [PASS 2] Batch ${Math.floor(i / BATCH_SIZE) + 1} cleanup failed, keeping original`);
+          cleaned.push(...batch);
+        }
+      } catch (error) {
+        console.error(`❌ [PASS 2] Batch ${Math.floor(i / BATCH_SIZE) + 1} error:`, error.message);
+        cleaned.push(...batch); // Fallback to original
       }
       
       if (i + BATCH_SIZE < questions.length) {
@@ -367,7 +420,7 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Running',
     model: OPENAI_MODEL,
-    version: '4.5-TWOPASS'
+    version: '4.6-FIXED'
   });
 });
 
@@ -385,7 +438,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 V4.5 TWO-PASS [${reqId}]`);
+    console.log(`🚀 V4.6 FIXED [${reqId}]`);
     console.log(`📄 ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
@@ -421,7 +474,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
 
     // PASS 2: Clean up
     updateProgress(reqId, 65, 'المرحلة 2: تنظيف النصوص...');
-    const cleanQuestions = await cleanupQuestions(rawQuestions, requestId);
+    const cleanQuestions = await cleanupQuestions(rawQuestions, reqId); // FIXED: was requestId
 
     updateProgress(reqId, 95, 'إنهاء...');
     
@@ -473,14 +526,15 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 AI Quiz System V4.5 TWO-PASS');
+  console.log('🚀 AI Quiz System V4.6 FIXED');
   console.log('='.repeat(60));
   console.log(`📡 Port: ${PORT}`);
   console.log(`🤖 Model: ${OPENAI_MODEL}`);
-  console.log('✨ Strategy:');
-  console.log('   PASS 1: Extract ALL questions (like V4.1)');
-  console.log('   PASS 2: Clean up garbled text');
-  console.log('   Result: High count + Clean text!');
+  console.log('✨ Fixes:');
+  console.log('   - Fixed requestId typo → reqId');
+  console.log('   - Robust JSON parsing (5 strategies)');
+  console.log('   - Better error handling');
+  console.log('   - Safe fallbacks');
   console.log('='.repeat(60) + '\n');
 });
 
