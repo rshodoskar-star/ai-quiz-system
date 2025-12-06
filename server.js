@@ -26,7 +26,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022';
+const CLAUDE_MODEL = 'claude-3-5-sonnet-20240620'; // Public version
 const CHUNK_SIZE = 30000; // Optimal for Claude
 const MAX_PDF_SIZE_MB = parseInt(process.env.MAX_PDF_SIZE_MB) || 50;
 const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
