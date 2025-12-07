@@ -55,7 +55,10 @@ class ArabicPDFExtractor:
                 print("✅ PaddleOCR initialized", file=sys.stderr)
             except Exception as e:
                 print(f"⚠️ PaddleOCR init failed: {e}", file=sys.stderr)
+                print("⚠️ OCR fallback disabled, using layout extraction only", file=sys.stderr)
                 self.use_ocr = False
+        else:
+            print("ℹ️  OCR disabled, using layout extraction only", file=sys.stderr)
     
     def extract(self, pdf_path):
         """Main extraction method"""
