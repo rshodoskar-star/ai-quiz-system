@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>نظام الاختبارات الذكي - AI Quiz System V8.0</title>
+    <title>نظام الاختبارات الذكي - AI Quiz System</title>
     <style>
         * {
             margin: 0;
@@ -94,7 +94,7 @@
             cursor: not-allowed;
         }
 
-        /* REAL Progress Bar with Server Polling */
+        /* Smart Progress Bar - Works with Synchronous Server */
         .progress-container {
             display: none;
             background: #f8f9ff;
@@ -228,7 +228,7 @@
 <body>
     <div class="container">
         <h1>🎓 نظام الاختبارات الذكي</h1>
-        <p class="subtitle">V8.0 Professional - مع Progress Bar حقيقي!</p>
+        <p class="subtitle">حوّل ملفات PDF إلى اختبارات تفاعلية</p>
 
         <div class="error" id="errorMessage"></div>
 
@@ -245,7 +245,7 @@
             <button id="resetBtn">🔄 إعادة تعيين</button>
         </div>
 
-        <!-- Progress Bar with REAL Server Polling -->
+        <!-- Smart Progress Bar (works with sync server) -->
         <div class="progress-container" id="progressContainer">
             <div class="progress-info">
                 <div class="progress-message" id="progressMessage">جاري المعالجة...</div>
@@ -282,7 +282,6 @@
 
         let selectedFile = null;
         let progressInterval = null;
-        let requestId = null;
         let isProcessing = false;
 
         pdfFile.addEventListener('change', (e) => {
@@ -304,13 +303,13 @@
             uploadSection.style.display = 'none';
             generateBtn.disabled = true;
 
-            updateProgress(0, 'جاري رفع الملف...');
+            // Start smart progress animation
+            startSmartProgress();
 
             const formData = new FormData();
             formData.append('file', selectedFile);
 
             try {
-                // Send file to server - it returns requestId immediately
                 const response = await fetch('/api/quiz-from-pdf', {
                     method: 'POST',
                     body: formData
@@ -322,76 +321,88 @@
 
                 const data = await response.json();
 
-                if (data.success && data.requestId) {
-                    // Got requestId! Start polling for real progress
-                    requestId = data.requestId;
-                    startRealServerPolling(requestId);
+                // Stop animation
+                stopProgress();
+
+                if (data.success && data.questions) {
+                    // Complete to 100%
+                    completeProgress(() => {
+                        handleSuccess(data.questions);
+                    });
                 } else {
                     throw new Error(data.error || 'حدث خطأ');
                 }
 
             } catch (error) {
-                stopPolling();
+                stopProgress();
                 console.error('Error:', error);
                 showError(error.message);
                 resetInterface();
             }
         });
 
-        function startRealServerPolling(reqId) {
-            progressInterval = setInterval(async () => {
-                try {
-                    const response = await fetch(`/api/progress/${reqId}`);
-                    
-                    if (response.ok) {
-                        const data = await response.json();
-                        
-                        // Update progress
-                        updateProgress(data.progress || 0, data.message || 'جاري المعالجة...');
-                        
-                        // Check if completed
-                        if (data.completed && data.results) {
-                            stopPolling();
-                            handleSuccess(data.results.questions);
-                        } else if (data.error) {
-                            stopPolling();
-                            throw new Error(data.error);
-                        }
-                    }
+        function startSmartProgress() {
+            let progress = 0;
+            let stage = 0;
+            
+            const stages = [
+                { end: 15, speed: 1.5, message: 'رفع الملف...' },
+                { end: 35, speed: 0.8, message: 'استخراج النص من PDF...' },
+                { end: 55, speed: 0.5, message: 'تحليل المحتوى...' },
+                { end: 70, speed: 0.4, message: 'البحث عن الأسئلة...' },
+                { end: 85, speed: 0.3, message: 'استخراج الخيارات...' },
+                { end: 92, speed: 0.2, message: 'التحقق من الجودة...' }
+            ];
 
-                } catch (error) {
-                    stopPolling();
-                    showError(error.message || 'حدث خطأ أثناء المعالجة');
-                    resetInterface();
+            progressInterval = setInterval(() => {
+                const currentStage = stages[stage];
+                
+                if (progress < currentStage.end) {
+                    progress += currentStage.speed;
+                    updateProgress(Math.round(progress), currentStage.message);
+                } else {
+                    stage++;
+                    if (stage >= stages.length) {
+                        // Stay at ~92% until response
+                        updateProgress(92, 'جاري الإنهاء...');
+                    }
                 }
-            }, 500); // Poll every 500ms - real-time updates!
+            }, 200);
         }
 
-        function stopPolling() {
+        function stopProgress() {
             if (progressInterval) {
                 clearInterval(progressInterval);
                 progressInterval = null;
             }
         }
 
-        function updateProgress(progress, message) {
-            // Ensure progress doesn't go backwards
-            const currentWidth = parseFloat(progressBar.style.width) || 0;
-            const newWidth = Math.max(currentWidth, progress);
+        function completeProgress(callback) {
+            let current = parseInt(progressBar.style.width) || 92;
             
-            progressBar.style.width = `${newWidth}%`;
-            progressPercentage.textContent = `${Math.round(newWidth)}%`;
+            const interval = setInterval(() => {
+                current += 3;
+                if (current >= 100) {
+                    current = 100;
+                    clearInterval(interval);
+                    updateProgress(100, 'تم الانتهاء! ✅');
+                    setTimeout(callback, 800);
+                } else {
+                    updateProgress(current, 'جاري الإنهاء...');
+                }
+            }, 50);
+        }
+
+        function updateProgress(progress, message) {
+            progressBar.style.width = `${progress}%`;
+            progressPercentage.textContent = `${Math.round(progress)}%`;
             progressMessage.textContent = message || 'جاري المعالجة...';
         }
 
         function handleSuccess(questions) {
-            updateProgress(100, 'تم الانتهاء! ✅');
-
-            setTimeout(() => {
-                isProcessing = false;
-                progressContainer.classList.remove('active');
-                displayQuiz(questions);
-            }, 1000);
+            isProcessing = false;
+            progressContainer.classList.remove('active');
+            displayQuiz(questions);
         }
 
         function displayQuiz(questions) {
@@ -445,10 +456,9 @@
         });
 
         function resetInterface() {
-            stopPolling();
+            stopProgress();
 
             selectedFile = null;
-            requestId = null;
             isProcessing = false;
             pdfFile.value = '';
             fileName.textContent = 'لم يتم اختيار ملف';
