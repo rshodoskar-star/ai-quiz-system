@@ -1,16 +1,17 @@
 # ====================================
 # AI Quiz System V8.0 - Professional Dockerfile
 # Python 3.10 + Node.js 20 + PaddleOCR
+# FIXED: Use PyPI instead of Baidu mirror
 # ====================================
 
 FROM python:3.10-slim
 
-# Install system dependencies for PaddleOCR and OpenCV
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     git \
     build-essential \
-    # OpenCV and image processing dependencies
+    # OpenCV dependencies
     libgl1 \
     libglib2.0-0 \
     libsm6 \
@@ -18,7 +19,7 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libgomp1 \
     libstdc++6 \
-    # Image format libraries
+    # Image libraries
     libjpeg62-turbo \
     libpng16-16 \
     libfreetype6 \
@@ -26,7 +27,6 @@ RUN apt-get update && apt-get install -y \
     libwebp7 \
     libtiff6 \
     libopenjp2-7 \
-    # X11 libraries
     libxcb1 \
     libfontconfig1 \
     && rm -rf /var/lib/apt/lists/* \
@@ -37,21 +37,27 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy and install Python dependencies
+# Copy Python requirements
 COPY requirements.txt .
+
+# Upgrade pip
 RUN pip install --upgrade pip setuptools wheel
 
-# Install PaddlePaddle and OCR
-RUN pip install --no-cache-dir paddlepaddle==2.5.2 -i https://mirror.baidu.com/pypi/simple \
-    && pip install --no-cache-dir paddleocr opencv-python-headless
+# Install PaddlePaddle CPU version (from official PyPI)
+# Use paddlepaddle instead of paddlepaddle==2.5.2
+RUN pip install --no-cache-dir paddlepaddle
+
+# Install OCR and dependencies
+RUN pip install --no-cache-dir \
+    paddleocr \
+    opencv-python-headless
 
 # Install remaining Python packages
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download PaddleOCR Arabic model (optional - speeds up first request)
+# Try to download Arabic model (optional)
 RUN python3 -c "from paddleocr import PaddleOCR; ocr = PaddleOCR(lang='ar', show_log=False)" || true
 
 # Copy and install Node.js dependencies
@@ -68,5 +74,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Start Node.js server
+# Start server
 CMD ["node", "server.js"]
