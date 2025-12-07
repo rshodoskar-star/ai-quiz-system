@@ -1,7 +1,6 @@
 // ====================================
-// AI Quiz System V8.0 PROFESSIONAL
-// PyMuPDF + PaddleOCR + Layout + Normalization
-// 98%+ accuracy for Arabic text!
+// AI Quiz System V8.1 - IMPROVED PROGRESS
+// PyMuPDF + PaddleOCR + Real-time Progress
 // ====================================
 
 require('dotenv').config();
@@ -22,45 +21,70 @@ const openai = new OpenAI({
 });
 
 const GPT_MODEL = 'gpt-4o';
-const CHUNK_SIZE = 40000; // Increased to reduce chunks and improve coverage
+const CHUNK_SIZE = 40000;
 const MAX_PDF_SIZE_MB = parseInt(process.env.MAX_PDF_SIZE_MB) || 50;
 const MAX_PDF_SIZE_BYTES = MAX_PDF_SIZE_MB * 1024 * 1024;
 
-// Progress tracking
+// ====================================
+// IMPROVED Progress Tracking System
+// ====================================
+
 const progressStore = new Map();
 
-function updateProgress(requestId, progress, message) {
-  progressStore.set(requestId, { progress, message, timestamp: Date.now() });
-  console.log(`[${requestId}] ${progress}% - ${message}`);
+function updateProgress(requestId, progress, message, error = false) {
+  if (!requestId) return;
+  
+  progressStore.set(requestId, { 
+    progress: Math.min(100, Math.max(0, progress)),
+    message: message || '',
+    timestamp: Date.now(),
+    error: error
+  });
+  
+  console.log(`📊 [${requestId}] ${progress}% - ${message}${error ? ' ❌' : ''}`);
 }
 
 function getProgress(requestId) {
-  return progressStore.get(requestId) || { progress: 0, message: 'جاري البدء...' };
+  if (!requestId) {
+    return { progress: 0, message: 'جاري البدء...', error: false };
+  }
+  
+  const data = progressStore.get(requestId);
+  if (!data) {
+    return { progress: 0, message: 'جاري البدء...', error: false };
+  }
+  
+  return data;
 }
 
 function clearProgress(requestId) {
-  progressStore.delete(requestId);
+  if (requestId) {
+    progressStore.delete(requestId);
+  }
 }
 
+// Auto-cleanup old progress data (10 minutes)
 setInterval(() => {
   const now = Date.now();
+  const EXPIRY = 10 * 60 * 1000; // 10 minutes
+  
   for (const [key, value] of progressStore.entries()) {
-    if (now - value.timestamp > 10 * 60 * 1000) {
+    if (now - value.timestamp > EXPIRY) {
       progressStore.delete(key);
+      console.log(`🧹 Cleaned up old progress: ${key}`);
     }
   }
-}, 60000);
+}, 60000); // Check every minute
 
 // Middleware
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGIN || '*',
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
   methods: ['GET', 'POST'],
   credentials: true
 }));
 
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static('public'));
 
 const limiter = rateLimit({
   windowMs: 60 * 60 * 1000,
@@ -87,16 +111,15 @@ const upload = multer({
 // PyMuPDF PDF Extraction
 // ====================================
 
-async function extractTextWithPyMuPDF(buffer) {
+async function extractTextWithPyMuPDF(buffer, reqId) {
   return new Promise((resolve, reject) => {
     try {
-      // Save buffer to temp file
       const tempPath = `/tmp/temp_${Date.now()}.pdf`;
       fs.writeFileSync(tempPath, buffer);
       
       console.log('📄 Calling Python PyMuPDF extractor...');
+      updateProgress(reqId, 15, 'استخراج النص من PDF...');
       
-      // Call Python script
       const python = spawn('python3', [
         path.join(__dirname, 'extract_pdf.py'),
         tempPath
@@ -115,7 +138,6 @@ async function extractTextWithPyMuPDF(buffer) {
       });
       
       python.on('close', (code) => {
-        // Clean up temp file
         try {
           fs.unlinkSync(tempPath);
         } catch (e) {
@@ -123,7 +145,9 @@ async function extractTextWithPyMuPDF(buffer) {
         }
         
         if (code !== 0) {
-          console.error('Python script failed:', errorOutput);
+          console.error('❌ Python script failed with code:', code);
+          console.error('Python stderr:', errorOutput);
+          updateProgress(reqId, 0, 'فشل استخراج النص', true);
           reject(new Error(`Python script failed with code ${code}`));
           return;
         }
@@ -133,18 +157,30 @@ async function extractTextWithPyMuPDF(buffer) {
           
           if (result.success) {
             console.log(`✅ PyMuPDF extracted: ${result.length} characters`);
-            console.log(`📑 Pages: ${result.metadata.pages}`);
+            updateProgress(reqId, 30, 'تحليل المحتوى...');
+            
+            if (result.metadata) {
+              console.log(`📄 Pages: ${result.metadata.pages}`);
+              if (result.metadata.ocr_pages && result.metadata.ocr_pages.length > 0) {
+                console.log(`📸 OCR used on pages: ${result.metadata.ocr_pages.join(', ')}`);
+              }
+            }
             resolve(result.text);
           } else {
+            console.error('❌ Extraction failed:', result.error);
+            updateProgress(reqId, 0, result.error || 'فشل الاستخراج', true);
             reject(new Error(result.error || 'Extraction failed'));
           }
         } catch (e) {
-          console.error('Failed to parse Python output:', output);
-          reject(new Error('Failed to parse extraction result'));
+          console.error('❌ Failed to parse Python output');
+          console.error('Raw output (first 500 chars):', output.substring(0, 500));
+          updateProgress(reqId, 0, 'خطأ في تحليل النتائج', true);
+          reject(new Error('Failed to parse extraction result: ' + e.message));
         }
       });
       
     } catch (error) {
+      updateProgress(reqId, 0, 'خطأ في الاستخراج', true);
       reject(error);
     }
   });
@@ -156,7 +192,7 @@ async function extractTextWithPyMuPDF(buffer) {
 
 function smartSplit(text, chunkSize) {
   const chunks = [];
-  const OVERLAP = 500; // Overlap to avoid losing questions at boundaries
+  const OVERLAP = 500;
   
   const questionPatterns = [
     /(?=(?:\n|^)\s*\d+[\.\):])/g,
@@ -189,7 +225,6 @@ function smartSplit(text, chunkSize) {
       } else {
         if (current) {
           chunks.push(current.trim());
-          // Keep last OVERLAP chars for next chunk
           lastChunk = current.slice(-OVERLAP);
         }
         current = lastChunk + block;
@@ -197,7 +232,6 @@ function smartSplit(text, chunkSize) {
     }
     if (current) chunks.push(current.trim());
   } else {
-    // Fallback: split with overlap
     console.log(`⚠️ No question patterns detected, using overlap splitting`);
     for (let i = 0; i < text.length; i += chunkSize - OVERLAP) {
       const chunk = text.substring(i, i + chunkSize);
@@ -221,64 +255,64 @@ const GPT_PROMPT = `أنت خبير في استخراج أسئلة الاختي�
 1. استخرج **كل** أسئلة الاختيار من متعدد - لا تترك أي سؤال!
 2. إذا رأيت رقم سؤال (1. أو س1 أو سؤال 1)، استخرجه
 3. احتفظ بالنص كما هو (نظيف بالفعل)
-4. تأكد من استخراج كل سؤال في هذا الجزء
+4. رد **فقط** بصيغة JSON صحيحة، بدون أي نص إضافي
 
-أخرج JSON object بهذا الشكل فقط:
-{
-  "questions": [
-    {
-      "chapter": "اسم الفصل (إن وجد)",
-      "question": "نص السؤال",
-      "options": ["خيار 1", "خيار 2", "خيار 3", "خيار 4"],
-      "correct": 0
-    }
-  ]
-}
+الصيغة المطلوبة:
+[
+  {
+    "question": "نص السؤال كاملاً",
+    "options": ["الخيار 1", "الخيار 2", "الخيار 3", "الخيار 4"],
+    "correct": 0,
+    "chapter": "اسم الفصل (إن وُجد)"
+  }
+]
 
-مهم جداً:
-- استخرج **جميع** الأسئلة في هذا الجزء
-- لا تتوقف حتى تنتهي من كل الأسئلة
-- أخرج JSON فقط
-- النص نظيف، لا تغيره`;
+قواعد مهمة:
+- "correct" = رقم الخيار الصحيح (0 للأول، 1 للثاني، إلخ)
+- إذا لم تجد الإجابة الصحيحة، ضع 0
+- إذا لم يكن هناك فصل واضح، اترك "chapter" فارغاً أو احذف المفتاح
+- لا تضف أي نص قبل أو بعد JSON
+- تأكد من صحة JSON (لا فواصل زائدة، أقواس متوازنة)`;
 
-async function extractWithGPT4(chunk, index, total, reqId) {
+async function extractWithGPT4(chunk, index, totalChunks, reqId) {
   try {
-    console.log(`🤖 [GPT-4] Processing chunk ${index + 1}/${total}`);
+    const progress = 40 + Math.round((index / totalChunks) * 50);
+    updateProgress(reqId, progress, `معالجة الجزء ${index + 1}/${totalChunks}...`);
     
     const completion = await openai.chat.completions.create({
       model: GPT_MODEL,
-      response_format: { type: "json_object" },
       messages: [
-        {
-          role: 'system',
-          content: GPT_PROMPT
-        },
-        {
-          role: 'user',
-          content: `استخرج أسئلة الاختيار من متعدد:\n\n${chunk}`
-        }
+        { role: 'system', content: GPT_PROMPT },
+        { role: 'user', content: chunk }
       ],
-      temperature: 0.2,
+      temperature: 0.1,
       max_tokens: 16000
     });
+
+    const content = completion.choices[0]?.message?.content || '[]';
     
-    const response = completion.choices[0].message.content;
-    
-    let questions = [];
+    let parsed;
     try {
-      const parsed = JSON.parse(response);
-      questions = parsed.questions || parsed.Questions || [];
-      
-      if (!Array.isArray(questions)) {
-        console.warn('⚠️ Questions is not an array');
-        questions = [];
-      }
+      const cleaned = content.trim().replace(/```json\n?/g, '').replace(/```\n?/g, '');
+      parsed = JSON.parse(cleaned);
     } catch (e) {
-      console.error(`❌ JSON parse error:`, e.message);
+      console.warn(`⚠️ Chunk ${index + 1}: Failed to parse JSON, attempting fix...`);
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[0]);
+      } else {
+        console.error(`❌ Chunk ${index + 1}: Could not extract JSON`);
+        return [];
+      }
     }
-    
-    const validated = validateQuestions(questions);
-    console.log(`✅ [GPT-4] Chunk ${index + 1}: ${validated.length} questions`);
+
+    if (!Array.isArray(parsed)) {
+      console.warn(`⚠️ Chunk ${index + 1}: Response is not an array`);
+      return [];
+    }
+
+    const validated = validateQuestions(parsed);
+    console.log(`✅ Chunk ${index + 1}/${totalChunks}: ${validated.length} questions`);
     
     return validated;
     
@@ -291,15 +325,13 @@ async function extractWithGPT4(chunk, index, total, reqId) {
 async function extractAllWithGPT4(text, reqId) {
   try {
     const chunks = smartSplit(text, CHUNK_SIZE);
-    updateProgress(reqId, 50, `معالجة ${chunks.length} أجزاء...`);
+    updateProgress(reqId, 40, `البحث عن الأسئلة في ${chunks.length} جزء...`);
     
     const PARALLEL_LIMIT = 3;
     const allQuestions = [];
     
     for (let i = 0; i < chunks.length; i += PARALLEL_LIMIT) {
       const batch = chunks.slice(i, i + PARALLEL_LIMIT);
-      const progress = 50 + Math.round((i / chunks.length) * 45);
-      updateProgress(reqId, progress, `معالجة... (${i + 1}/${chunks.length})`);
       
       const promises = batch.map((chunk, idx) => 
         extractWithGPT4(chunk, i + idx, chunks.length, reqId)
@@ -316,8 +348,8 @@ async function extractAllWithGPT4(text, reqId) {
     }
     
     console.log(`📋 Before deduplication: ${allQuestions.length} questions`);
+    updateProgress(reqId, 90, 'إزالة التكرارات...');
     
-    // Deduplicate questions (due to overlap)
     const deduplicated = deduplicateQuestions(allQuestions);
     
     console.log(`✅ After deduplication: ${deduplicated.length} questions`);
@@ -325,21 +357,20 @@ async function extractAllWithGPT4(text, reqId) {
     
   } catch (error) {
     console.error('GPT-4 extraction error:', error);
+    updateProgress(reqId, 0, 'خطأ في استخراج الأسئلة', true);
     throw error;
   }
 }
 
-// Deduplicate questions based on question text similarity
 function deduplicateQuestions(questions) {
   const seen = new Set();
   const unique = [];
   
   for (const q of questions) {
-    // Normalize question text for comparison
     const normalized = q.question
       .trim()
       .replace(/\s+/g, ' ')
-      .substring(0, 100); // First 100 chars for comparison
+      .substring(0, 100);
     
     if (!seen.has(normalized)) {
       seen.add(normalized);
@@ -351,10 +382,6 @@ function deduplicateQuestions(questions) {
   
   return unique;
 }
-
-// ====================================
-// Validation
-// ====================================
 
 function validateQuestions(questions) {
   if (!Array.isArray(questions)) return [];
@@ -398,20 +425,26 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Running',
     model: GPT_MODEL,
-    version: '8.0-PROFESSIONAL',
-    extractor: 'PyMuPDF + PaddleOCR + Layout + Normalization',
-    features: ['Layout Extraction', 'OCR Fallback', 'Text Normalization', 'RTL Support'],
+    version: '8.1-IMPROVED-PROGRESS',
+    extractor: 'PyMuPDF + PaddleOCR + Real-time Progress',
+    features: ['Layout Extraction', 'OCR Fallback', 'Text Normalization', 'RTL Support', 'Progress Sync'],
     openaiAvailable: !!process.env.OPENAI_API_KEY
   });
 });
 
 app.get('/api/progress/:requestId', (req, res) => {
-  res.json(getProgress(req.params.requestId));
+  const data = getProgress(req.params.requestId);
+  res.json(data);
 });
 
 app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
   const start = Date.now();
-  const reqId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  // Get request ID from header or generate new one
+  let reqId = req.headers['x-request-id'];
+  if (!reqId) {
+    reqId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
   
   try {
     if (!req.file) {
@@ -419,15 +452,14 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 V7.0 PYMUPDF [${reqId}]`);
+    console.log(`🚀 V8.1 IMPROVED [${reqId}]`);
     console.log(`📄 ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
     updateProgress(reqId, 10, 'رفع الملف...');
     await new Promise(r => setTimeout(r, 300));
     
-    updateProgress(reqId, 25, 'استخراج النص (PyMuPDF)...');
-    const text = await extractTextWithPyMuPDF(req.file.buffer);
+    const text = await extractTextWithPyMuPDF(req.file.buffer, reqId);
     
     if (!text || text.length < 100) {
       clearProgress(reqId);
@@ -437,7 +469,7 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       });
     }
 
-    console.log(`📝 Extracted ${text.length} characters (clean!)`);
+    console.log(`📝 Extracted ${text.length} characters`);
 
     const questions = await extractAllWithGPT4(text, reqId);
 
@@ -456,11 +488,13 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     
     console.log(`${'='.repeat(60)}`);
     console.log(`✅ SUCCESS: ${questions.length} questions in ${time}s`);
-    console.log(`🔧 Extractor: PyMuPDF`);
-    console.log(`🤖 AI: GPT-4`);
+    console.log(`🔧 Extractor: PyMuPDF + PaddleOCR`);
+    console.log(`🤖 AI: GPT-4o`);
     console.log(`${'='.repeat(60)}\n`);
 
     updateProgress(reqId, 100, 'تم! ✅');
+    
+    // Keep progress for 5 seconds before cleanup
     setTimeout(() => clearProgress(reqId), 5000);
 
     res.json({
@@ -471,12 +505,15 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       questions: questions,
       processingTime: `${time}s`,
       extractor: 'pymupdf',
-      model: 'gpt-4'
+      model: 'gpt-4o'
     });
 
   } catch (error) {
     console.error(`❌ [${reqId}]:`, error);
-    clearProgress(reqId);
+    updateProgress(reqId, 0, error.message || 'حدث خطأ', true);
+    
+    // Keep error state for 5 seconds
+    setTimeout(() => clearProgress(reqId), 5000);
     
     if (error.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({
@@ -503,7 +540,7 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 AI Quiz System V8.0 PROFESSIONAL');
+  console.log('🚀 AI Quiz System V8.1 - IMPROVED PROGRESS');
   console.log('='.repeat(60));
   console.log(`📡 Port: ${PORT}`);
   console.log(`🔧 Extractor: PyMuPDF + PaddleOCR (98%+ accuracy)`);
@@ -514,7 +551,8 @@ app.listen(PORT, () => {
   console.log('   3. PaddleOCR → Scanned pages fallback');
   console.log('   4. Normalization → Clean Arabic text');
   console.log('   5. GPT-4 → Question extraction');
-  console.log('   6. Result: 98%+ accuracy, 140-145 questions!');
+  console.log('   6. Progress Sync → Real-time updates');
+  console.log('   7. Result: 98%+ accuracy with live progress!');
   console.log('='.repeat(60) + '\n');
 });
 
