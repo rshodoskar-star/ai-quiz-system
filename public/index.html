@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>نظام الاختبارات الذكي - AI Quiz System</title>
+    <title>Ù†Ø¸Ø§Ù… Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±Ø§Øª Ø§Ù„Ø°ÙƒÙŠ - AI Quiz System</title>
     <style>
         * {
             margin: 0;
@@ -532,17 +532,17 @@
 
         <!-- Header -->
         <div class="header">
-            <h1>🎓 نظام الاختبارات الذكي</h1>
-            <p>ارفع ملف PDF واحصل على اختبار تفاعلي باستخدام الذكاء الاصطناعي</p>
+            <h1>ðŸŽ“ Ù†Ø¸Ø§Ù… Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±Ø§Øª Ø§Ù„Ø°ÙƒÙŠ</h1>
+            <p>Ø§Ø±ÙØ¹ Ù…Ù„Ù PDF ÙˆØ§Ø­ØµÙ„ Ø¹Ù„Ù‰ Ø§Ø®ØªØ¨Ø§Ø± ØªÙØ§Ø¹Ù„ÙŠ Ø¨Ø§Ø³ØªØ®Ø¯Ø§Ù… Ø§Ù„Ø°ÙƒØ§Ø¡ Ø§Ù„Ø§ØµØ·Ù†Ø§Ø¹ÙŠ</p>
         </div>
 
         <!-- Screen 1: Upload -->
         <div id="uploadScreen" class="screen active">
             <div class="card">
                 <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
-                    <div class="upload-icon">📄</div>
-                    <div class="upload-text">اضغط لاختيار ملف PDF أو اسحبه هنا</div>
-                    <div class="upload-hint">الحد الأقصى: 50 ميجابايت</div>
+                    <div class="upload-icon">ðŸ“„</div>
+                    <div class="upload-text">Ø§Ø¶ØºØ· Ù„Ø§Ø®ØªÙŠØ§Ø± Ù…Ù„Ù PDF Ø£Ùˆ Ø§Ø³Ø­Ø¨Ù‡ Ù‡Ù†Ø§</div>
+                    <div class="upload-hint">Ø§Ù„Ø­Ø¯ Ø§Ù„Ø£Ù‚ØµÙ‰: 50 Ù…ÙŠØ¬Ø§Ø¨Ø§ÙŠØª</div>
                 </div>
                 <input type="file" id="fileInput" accept=".pdf">
             </div>
@@ -557,65 +557,65 @@
                         <div class="progress-text" id="progressText">0%</div>
                     </div>
                 </div>
-                <div class="progress-stage" id="progressStage">جاري التحضير...</div>
-                <div class="loading-details" id="loadingDetails">يرجى الانتظار، قد تستغرق العملية دقيقة أو دقيقتين...</div>
+                <div class="progress-stage" id="progressStage">Ø¬Ø§Ø±ÙŠ Ø§Ù„ØªØ­Ø¶ÙŠØ±...</div>
+                <div class="loading-details" id="loadingDetails">ÙŠØ±Ø¬Ù‰ Ø§Ù„Ø§Ù†ØªØ¸Ø§Ø±ØŒ Ù‚Ø¯ ØªØ³ØªØºØ±Ù‚ Ø§Ù„Ø¹Ù…Ù„ÙŠØ© Ø¯Ù‚ÙŠÙ‚Ø© Ø£Ùˆ Ø¯Ù‚ÙŠÙ‚ØªÙŠÙ†...</div>
             </div>
         </div>
 
         <!-- Screen 3: Settings -->
         <div id="settingsScreen" class="screen">
             <div class="card">
-                <h2 style="color: #ffffff; margin-bottom: 30px;">⚙️ إعدادات الاختبار</h2>
+                <h2 style="color: #ffffff; margin-bottom: 30px;">âš™ï¸ Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±</h2>
 
                 <div class="info-box">
-                    <p>📊 إجمالي الأسئلة المتاحة: <strong><span id="totalQuestionsInfo">0</span></strong></p>
+                    <p>ðŸ“Š Ø¥Ø¬Ù…Ø§Ù„ÙŠ Ø§Ù„Ø£Ø³Ø¦Ù„Ø© Ø§Ù„Ù…ØªØ§Ø­Ø©: <strong><span id="totalQuestionsInfo">0</span></strong></p>
                 </div>
 
                 <div class="settings-group">
-                    <label>عدد الأسئلة:</label>
+                    <label>Ø¹Ø¯Ø¯ Ø§Ù„Ø£Ø³Ø¦Ù„Ø©:</label>
                     <select id="questionCount">
-                        <option value="all">جميع الأسئلة</option>
-                        <option value="10">10 أسئلة</option>
-                        <option value="20" selected>20 سؤال</option>
-                        <option value="30">30 سؤال</option>
-                        <option value="50">50 سؤال</option>
-                        <option value="custom">عدد مخصص</option>
+                        <option value="all">Ø¬Ù…ÙŠØ¹ Ø§Ù„Ø£Ø³Ø¦Ù„Ø©</option>
+                        <option value="10">10 Ø£Ø³Ø¦Ù„Ø©</option>
+                        <option value="20" selected>20 Ø³Ø¤Ø§Ù„</option>
+                        <option value="30">30 Ø³Ø¤Ø§Ù„</option>
+                        <option value="50">50 Ø³Ø¤Ø§Ù„</option>
+                        <option value="custom">Ø¹Ø¯Ø¯ Ù…Ø®ØµØµ</option>
                     </select>
-                    <input type="number" id="customCount" placeholder="أدخل العدد" min="1" max="200">
+                    <input type="number" id="customCount" placeholder="Ø£Ø¯Ø®Ù„ Ø§Ù„Ø¹Ø¯Ø¯" min="1" max="200">
                 </div>
 
                 <div class="settings-group">
-                    <label>تصفية حسب الفصل:</label>
+                    <label>ØªØµÙÙŠØ© Ø­Ø³Ø¨ Ø§Ù„ÙØµÙ„:</label>
                     <select id="chapterFilter">
-                        <option value="all">جميع الفصول</option>
+                        <option value="all">Ø¬Ù…ÙŠØ¹ Ø§Ù„ÙØµÙˆÙ„</option>
                     </select>
                 </div>
 
                 <div class="settings-group">
-                    <label>ترتيب الأسئلة:</label>
+                    <label>ØªØ±ØªÙŠØ¨ Ø§Ù„Ø£Ø³Ø¦Ù„Ø©:</label>
                     <select id="questionOrder">
-                        <option value="random">عشوائي</option>
-                        <option value="sequential">تسلسلي</option>
+                        <option value="random">Ø¹Ø´ÙˆØ§Ø¦ÙŠ</option>
+                        <option value="sequential">ØªØ³Ù„Ø³Ù„ÙŠ</option>
                     </select>
                 </div>
 
                 <div class="settings-group">
                     <label class="checkbox-label">
                         <input type="checkbox" id="shuffleOptions" checked>
-                        <span>خلط ترتيب الخيارات</span>
+                        <span>Ø®Ù„Ø· ØªØ±ØªÙŠØ¨ Ø§Ù„Ø®ÙŠØ§Ø±Ø§Øª</span>
                     </label>
                 </div>
 
                 <div class="settings-group">
                     <label class="checkbox-label">
                         <input type="checkbox" id="showFeedback" checked>
-                        <span>إظهار الإجابة الصحيحة فوراً</span>
+                        <span>Ø¥Ø¸Ù‡Ø§Ø± Ø§Ù„Ø¥Ø¬Ø§Ø¨Ø© Ø§Ù„ØµØ­ÙŠØ­Ø© ÙÙˆØ±Ø§Ù‹</span>
                     </label>
                 </div>
 
                 <div class="nav-buttons">
-                    <button class="btn btn-secondary" onclick="goToUpload()">رجوع</button>
-                    <button class="btn btn-primary" onclick="startQuiz()">ابدأ الاختبار</button>
+                    <button class="btn btn-secondary" onclick="goToUpload()">Ø±Ø¬ÙˆØ¹</button>
+                    <button class="btn btn-primary" onclick="startQuiz()">Ø§Ø¨Ø¯Ø£ Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±</button>
                 </div>
             </div>
         </div>
@@ -625,10 +625,10 @@
             <div class="card">
                 <div class="quiz-header">
                     <div class="quiz-info">
-                        السؤال <span id="currentQuestion">1</span> من <span id="totalQuestions">20</span>
+                        Ø§Ù„Ø³Ø¤Ø§Ù„ <span id="currentQuestion">1</span> Ù…Ù† <span id="totalQuestions">20</span>
                     </div>
                     <div class="quiz-info">
-                        النقاط: <span id="currentScore">0</span>
+                        Ø§Ù„Ù†Ù‚Ø§Ø·: <span id="currentScore">0</span>
                     </div>
                     <div class="quiz-progress">
                         <div id="progressBar" style="width: 0%"></div>
@@ -636,16 +636,16 @@
                 </div>
 
                 <div class="question-card">
-                    <div class="question-header" id="questionNumber">السؤال 1</div>
+                    <div class="question-header" id="questionNumber">Ø§Ù„Ø³Ø¤Ø§Ù„ 1</div>
                     <div class="question-text" id="questionText"></div>
 
                     <ul class="options-list" id="optionsList"></ul>
                 </div>
 
                 <div class="nav-buttons">
-                    <button class="btn btn-secondary" id="prevBtn" onclick="previousQuestion()">السابق</button>
-                    <button class="btn btn-secondary" onclick="endQuiz()">إنهاء</button>
-                    <button class="btn btn-primary" onclick="nextQuestion()">التالي</button>
+                    <button class="btn btn-secondary" id="prevBtn" onclick="previousQuestion()">Ø§Ù„Ø³Ø§Ø¨Ù‚</button>
+                    <button class="btn btn-secondary" onclick="endQuiz()">Ø¥Ù†Ù‡Ø§Ø¡</button>
+                    <button class="btn btn-primary" onclick="nextQuestion()">Ø§Ù„ØªØ§Ù„ÙŠ</button>
                 </div>
             </div>
         </div>
@@ -654,11 +654,11 @@
         <div id="resultsScreen" class="screen">
             <div class="card">
                 <div class="results-container">
-                    <h2 style="color: #ffffff; margin-bottom: 30px;">🎉 نتيجة الاختبار</h2>
+                    <h2 style="color: #ffffff; margin-bottom: 30px;">ðŸŽ‰ Ù†ØªÙŠØ¬Ø© Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±</h2>
 
                     <div class="score-circle">
                         <div class="score-percentage" id="finalPercentage">0%</div>
-                        <div class="score-label">من 100%</div>
+                        <div class="score-label">Ù…Ù† 100%</div>
                     </div>
 
                     <div class="performance-message" id="performanceMessage"></div>
@@ -666,21 +666,21 @@
                     <div class="score-details">
                         <div class="detail-item">
                             <div class="detail-value" style="color: #10b981;" id="correctCount">0</div>
-                            <div class="detail-label">إجابات صحيحة</div>
+                            <div class="detail-label">Ø¥Ø¬Ø§Ø¨Ø§Øª ØµØ­ÙŠØ­Ø©</div>
                         </div>
                         <div class="detail-item">
                             <div class="detail-value" style="color: #ef4444;" id="incorrectCount">0</div>
-                            <div class="detail-label">إجابات خاطئة</div>
+                            <div class="detail-label">Ø¥Ø¬Ø§Ø¨Ø§Øª Ø®Ø§Ø·Ø¦Ø©</div>
                         </div>
                         <div class="detail-item">
                             <div class="detail-value" id="totalCount">0</div>
-                            <div class="detail-label">مجموع الأسئلة</div>
+                            <div class="detail-label">Ù…Ø¬Ù…ÙˆØ¹ Ø§Ù„Ø£Ø³Ø¦Ù„Ø©</div>
                         </div>
                     </div>
 
                     <div class="nav-buttons">
-                        <button class="btn btn-secondary" onclick="goToUpload()">اختبار جديد</button>
-                        <button class="btn btn-primary" onclick="retakeQuiz()">إعادة المحاولة</button>
+                        <button class="btn btn-secondary" onclick="goToUpload()">Ø§Ø®ØªØ¨Ø§Ø± Ø¬Ø¯ÙŠØ¯</button>
+                        <button class="btn btn-primary" onclick="retakeQuiz()">Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ù…Ø­Ø§ÙˆÙ„Ø©</button>
                     </div>
                 </div>
             </div>
@@ -688,7 +688,7 @@
 
         <!-- Footer -->
         <div class="footer">
-            © 2025 Rashed Aldosari — المشروع مجاني. ادعو لي بالتوفيق 🤍
+            Â© 2025 Rashed Aldosari â€” Ø§Ù„Ù…Ø´Ø±ÙˆØ¹ Ù…Ø¬Ø§Ù†ÙŠ. Ø§Ø¯Ø¹Ùˆ Ù„ÙŠ Ø¨Ø§Ù„ØªÙˆÙÙŠÙ‚ ðŸ¤
         </div>
     </div>
 
@@ -744,18 +744,21 @@
         // ====================================
 
         const progressStages = [
-            { start: 0, end: 15, speed: 1.5, text: 'رفع الملف...' },
-            { start: 15, end: 35, speed: 0.8, text: 'استخراج النص من PDF...' },
-            { start: 35, end: 55, speed: 0.5, text: 'تحليل المحتوى...' },
-            { start: 55, end: 70, speed: 0.4, text: 'البحث عن الأسئلة...' },
-            { start: 70, end: 85, speed: 0.3, text: 'استخراج الخيارات...' },
-            { start: 85, end: 92, speed: 0.2, text: 'التحقق من الجودة...' }
+            { start: 0, end: 10, speed: 0.3, text: 'رفع الملف...' },
+            { start: 10, end: 25, speed: 0.2, text: 'استخراج النص من PDF...' },
+            { start: 25, end: 45, speed: 0.15, text: 'تحليل المحتوى...' },
+            { start: 45, end: 65, speed: 0.12, text: 'البحث عن الأسئلة...' },
+            { start: 65, end: 80, speed: 0.08, text: 'استخراج الخيارات...' },
+            { start: 80, end: 90, speed: 0.05, text: 'التحقق من الجودة...' }
         ];
 
         let currentProgress = 0;
         let currentStageIndex = 0;
         let progressInterval = null;
         let processingComplete = false;
+        let progressPollInterval = null;
+        let serverProgress = 0;
+        let currentRequestId = null;
 
         function startSmartProgress() {
             currentProgress = 0;
@@ -792,8 +795,9 @@
                     }
                 }
                 
-                progressFill.style.width = currentProgress + '%';
-                progressText.textContent = Math.round(currentProgress) + '%';
+                const displayProgress = Math.max(currentProgress, serverProgress);
+                progressFill.style.width = displayProgress + '%';
+                progressText.textContent = Math.round(displayProgress) + '%';
                 
             }, 100);
         }
@@ -821,7 +825,55 @@
                 progressText.textContent = Math.round(finalProgress) + '%';
             }, 50);
             
-            progressStage.textContent = '✅ اكتمل الاستخراج!';
+            progressStage.textContent = 'âœ… Ø§ÙƒØªÙ…Ù„ Ø§Ù„Ø§Ø³ØªØ®Ø±Ø§Ø¬!';
+        }
+
+        function pollServerProgress(requestId) {
+            progressPollInterval = setInterval(async () => {
+                try {
+                    const res = await fetch(`${API_URL}/api/progress/${requestId}`);
+                    const data = await res.json();
+                    
+                    if (data.progress > 0) {
+                        serverProgress = data.progress;
+                        
+                        if (serverProgress > currentProgress) {
+                            currentProgress = serverProgress;
+                            document.getElementById('progressBarFill').style.width = serverProgress + '%';
+                            document.getElementById('progressText').textContent = Math.round(serverProgress) + '%';
+                        }
+                        
+                        if (data.message) {
+                            document.getElementById('progressStage').textContent = data.message;
+                        }
+                    }
+                    
+                    if (data.progress >= 100) {
+                        clearInterval(progressPollInterval);
+                        processingComplete = true;
+                    }
+                    
+                    if (data.error) {
+                        clearInterval(progressPollInterval);
+                        clearInterval(progressInterval);
+                        hideLoading();
+                        showAlert(data.message || 'Ø­Ø¯Ø« Ø®Ø·Ø£ Ø£Ø«Ù†Ø§Ø¡ Ø§Ù„Ù…Ø¹Ø§Ù„Ø¬Ø©', 'error');
+                    }
+                } catch (err) {
+                    console.error('Poll error:', err);
+                }
+            }, 1000);
+        }
+
+        function stopProgressPolling() {
+            if (progressPollInterval) {
+                clearInterval(progressPollInterval);
+                progressPollInterval = null;
+            }
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
         }
 
         // ====================================
@@ -832,19 +884,22 @@
             if (!file) return;
 
             if (file.type !== 'application/pdf') {
-                showAlert('يجب أن يكون الملف من نوع PDF', 'error');
+                showAlert('ÙŠØ¬Ø¨ Ø£Ù† ÙŠÙƒÙˆÙ† Ø§Ù„Ù…Ù„Ù Ù…Ù† Ù†ÙˆØ¹ PDF', 'error');
                 return;
             }
 
             const maxSize = 50 * 1024 * 1024; // 50MB
             if (file.size > maxSize) {
-                showAlert('حجم الملف أكبر من 50 ميجابايت', 'error');
+                showAlert('Ø­Ø¬Ù… Ø§Ù„Ù…Ù„Ù Ø£ÙƒØ¨Ø± Ù…Ù† 50 Ù…ÙŠØ¬Ø§Ø¨Ø§ÙŠØª', 'error');
                 return;
             }
 
             // Start smart progress
+            currentRequestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
             showLoading();
             startSmartProgress();
+            pollServerProgress(currentRequestId);
 
             const formData = new FormData();
             formData.append('file', file);
@@ -852,7 +907,10 @@
             try {
                 const response = await fetch(`${API_URL}/api/quiz-from-pdf`, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    headers: {
+                        'X-Request-ID': currentRequestId
+                    }
                 });
 
                 const data = await response.json();
@@ -865,21 +923,22 @@
 
                 if (data.success) {
                     questions = data.questions;
-                    showAlert(`تم استخراج ${data.totalQuestions} سؤال بنجاح! ✅`, 'success');
+                    showAlert(`ØªÙ… Ø§Ø³ØªØ®Ø±Ø§Ø¬ ${data.totalQuestions} Ø³Ø¤Ø§Ù„ Ø¨Ù†Ø¬Ø§Ø­! âœ…`, 'success');
                     
                     setTimeout(() => {
                         goToSettings();
                     }, 1500);
                 } else {
                     hideLoading();
-                    showAlert(data.error || 'حدث خطأ أثناء معالجة الملف', 'error');
+                    showAlert(data.error || 'Ø­Ø¯Ø« Ø®Ø·Ø£ Ø£Ø«Ù†Ø§Ø¡ Ù…Ø¹Ø§Ù„Ø¬Ø© Ø§Ù„Ù…Ù„Ù', 'error');
                 }
 
             } catch (error) {
-                hideLoading();
-                clearInterval(progressInterval);
                 console.error('Upload error:', error);
-                showAlert('حدث خطأ في الاتصال بالخادم', 'error');
+                stopProgressPolling();
+                stopProgressPolling();
+                hideLoading();
+                showAlert('Ø­Ø¯Ø« Ø®Ø·Ø£ ÙÙŠ Ø§Ù„Ø§ØªØµØ§Ù„ Ø¨Ø§Ù„Ø®Ø§Ø¯Ù…', 'error');
             }
         }
 
@@ -889,7 +948,7 @@
 
         function goToSettings() {
             if (!questions || questions.length === 0) {
-                showAlert('لا توجد أسئلة متاحة', 'error');
+                showAlert('Ù„Ø§ ØªÙˆØ¬Ø¯ Ø£Ø³Ø¦Ù„Ø© Ù…ØªØ§Ø­Ø©', 'error');
                 return;
             }
 
@@ -900,7 +959,7 @@
             // Populate chapters
             const chapters = [...new Set(questions.map(q => q.chapter).filter(Boolean))];
             const chapterFilter = document.getElementById('chapterFilter');
-            chapterFilter.innerHTML = '<option value="all">جميع الفصول</option>';
+            chapterFilter.innerHTML = '<option value="all">Ø¬Ù…ÙŠØ¹ Ø§Ù„ÙØµÙˆÙ„</option>';
             
             chapters.forEach(chapter => {
                 const option = document.createElement('option');
@@ -939,7 +998,7 @@
                 : questions.filter(q => q.chapter === chapter);
 
             if (filteredQuestions.length === 0) {
-                showAlert('لا توجد أسئلة في هذا الفصل', 'error');
+                showAlert('Ù„Ø§ ØªÙˆØ¬Ø¯ Ø£Ø³Ø¦Ù„Ø© ÙÙŠ Ù‡Ø°Ø§ Ø§Ù„ÙØµÙ„', 'error');
                 return;
             }
 
@@ -1000,8 +1059,8 @@
 
             // Update question
             const questionNumber = question.chapter 
-                ? `السؤال ${currentQuestionIndex + 1} - ${question.chapter}`
-                : `السؤال ${currentQuestionIndex + 1}`;
+                ? `Ø§Ù„Ø³Ø¤Ø§Ù„ ${currentQuestionIndex + 1} - ${question.chapter}`
+                : `Ø§Ù„Ø³Ø¤Ø§Ù„ ${currentQuestionIndex + 1}`;
             
             document.getElementById('questionNumber').textContent = questionNumber;
             document.getElementById('questionText').textContent = question.question;
@@ -1081,7 +1140,7 @@
         }
 
         function endQuiz() {
-            if (confirm('هل أنت متأكد من إنهاء الاختبار؟')) {
+            if (confirm('Ù‡Ù„ Ø£Ù†Øª Ù…ØªØ£ÙƒØ¯ Ù…Ù† Ø¥Ù†Ù‡Ø§Ø¡ Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±ØŸ')) {
                 showResults();
             }
         }
@@ -1105,15 +1164,15 @@
             // Performance message
             let message = '';
             if (percentage >= 90) {
-                message = '🌟 ممتاز! أداء رائع جداً!';
+                message = 'ðŸŒŸ Ù…Ù…ØªØ§Ø²! Ø£Ø¯Ø§Ø¡ Ø±Ø§Ø¦Ø¹ Ø¬Ø¯Ø§Ù‹!';
             } else if (percentage >= 80) {
-                message = '👏 جيد جداً! استمر بالتقدم!';
+                message = 'ðŸ‘ Ø¬ÙŠØ¯ Ø¬Ø¯Ø§Ù‹! Ø§Ø³ØªÙ…Ø± Ø¨Ø§Ù„ØªÙ‚Ø¯Ù…!';
             } else if (percentage >= 70) {
-                message = '✅ جيد! يمكنك التحسن أكثر!';
+                message = 'âœ… Ø¬ÙŠØ¯! ÙŠÙ…ÙƒÙ†Ùƒ Ø§Ù„ØªØ­Ø³Ù† Ø£ÙƒØ«Ø±!';
             } else if (percentage >= 60) {
-                message = '📚 مقبول، حاول المراجعة مرة أخرى!';
+                message = 'ðŸ“š Ù…Ù‚Ø¨ÙˆÙ„ØŒ Ø­Ø§ÙˆÙ„ Ø§Ù„Ù…Ø±Ø§Ø¬Ø¹Ø© Ù…Ø±Ø© Ø£Ø®Ø±Ù‰!';
             } else {
-                message = '💪 يحتاج إلى مزيد من المذاكرة!';
+                message = 'ðŸ’ª ÙŠØ­ØªØ§Ø¬ Ø¥Ù„Ù‰ Ù…Ø²ÙŠØ¯ Ù…Ù† Ø§Ù„Ù…Ø°Ø§ÙƒØ±Ø©!';
             }
 
             document.getElementById('performanceMessage').textContent = message;
@@ -1136,7 +1195,7 @@
         }
 
         function goToUpload() {
-            if (confirm('هل تريد العودة للبداية؟ سيتم فقد التقدم الحالي.')) {
+            if (confirm('Ù‡Ù„ ØªØ±ÙŠØ¯ Ø§Ù„Ø¹ÙˆØ¯Ø© Ù„Ù„Ø¨Ø¯Ø§ÙŠØ©ØŸ Ø³ÙŠØªÙ… ÙÙ‚Ø¯ Ø§Ù„ØªÙ‚Ø¯Ù… Ø§Ù„Ø­Ø§Ù„ÙŠ.')) {
                 questions = [];
                 filteredQuestions = [];
                 fileInput.value = '';
@@ -1193,7 +1252,7 @@
         // Initialize
         // ====================================
 
-        console.log('🚀 AI Quiz System initialized');
+        console.log('ðŸš€ AI Quiz System initialized');
         console.log('API URL:', API_URL);
     </script>
 </body>
