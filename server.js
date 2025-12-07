@@ -35,13 +35,7 @@ function updateProgress(requestId, progress, message) {
 }
 
 function getProgress(requestId) {
-  const data = progressStore.get(requestId);
-  if (!data) {
-    return { progress: 0, message: 'جاري البدء...' };
-  }
-  
-  // Return full data including results if completed
-  return data;
+  return progressStore.get(requestId) || { progress: 0, message: 'جاري البدء...' };
 }
 
 function clearProgress(requestId) {
@@ -129,36 +123,24 @@ async function extractTextWithPyMuPDF(buffer) {
         }
         
         if (code !== 0) {
-          console.error('❌ Python script failed with code:', code);
-          console.error('Python stderr:', errorOutput);
+          console.error('Python script failed:', errorOutput);
           reject(new Error(`Python script failed with code ${code}`));
           return;
         }
-        
-        // Log raw output for debugging
-        console.log('📤 Python output length:', output.length);
         
         try {
           const result = JSON.parse(output);
           
           if (result.success) {
             console.log(`✅ PyMuPDF extracted: ${result.length} characters`);
-            if (result.metadata) {
-              console.log(`📑 Pages: ${result.metadata.pages}`);
-              if (result.metadata.ocr_pages && result.metadata.ocr_pages.length > 0) {
-                console.log(`📸 OCR used on pages: ${result.metadata.ocr_pages.join(', ')}`);
-              }
-            }
+            console.log(`📑 Pages: ${result.metadata.pages}`);
             resolve(result.text);
           } else {
-            console.error('❌ Extraction failed:', result.error);
             reject(new Error(result.error || 'Extraction failed'));
           }
         } catch (e) {
-          console.error('❌ Failed to parse Python output');
-          console.error('Raw output (first 500 chars):', output.substring(0, 500));
-          console.error('Parse error:', e.message);
-          reject(new Error('Failed to parse extraction result: ' + e.message));
+          console.error('Failed to parse Python output:', output);
+          reject(new Error('Failed to parse extraction result'));
         }
       });
       
@@ -437,62 +419,34 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 V8.0 [${reqId}]`);
+    console.log(`🚀 V7.0 PYMUPDF [${reqId}]`);
     console.log(`📄 ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
-    // Return requestId immediately for polling
-    res.json({
-      success: true,
-      requestId: reqId,
-      message: 'جاري المعالجة...'
-    });
-
-    // Continue processing in background
-    processInBackground(reqId, req.file.buffer, start);
-
-  } catch (error) {
-    console.error(`❌ [${reqId}]:`, error);
-    clearProgress(reqId);
-    
-    res.status(500).json({
-      success: false,
-      error: error.message || 'حدث خطأ أثناء المعالجة'
-    });
-  }
-});
-
-// Background processing
-async function processInBackground(reqId, fileBuffer, start) {
-  try {
     updateProgress(reqId, 10, 'رفع الملف...');
     await new Promise(r => setTimeout(r, 300));
     
     updateProgress(reqId, 25, 'استخراج النص (PyMuPDF)...');
-    const text = await extractTextWithPyMuPDF(fileBuffer);
+    const text = await extractTextWithPyMuPDF(req.file.buffer);
     
     if (!text || text.length < 100) {
-      updateProgress(reqId, 0, 'خطأ: الملف لا يحتوي على نص كافٍ');
-      progressStore.set(reqId, { 
-        progress: 0, 
-        error: 'الملف لا يحتوي على نص كافٍ',
-        timestamp: Date.now() 
+      clearProgress(reqId);
+      return res.status(400).json({
+        success: false,
+        error: 'الملف لا يحتوي على نص كافٍ'
       });
-      return;
     }
 
-    console.log(`📝 Extracted ${text.length} characters`);
+    console.log(`📝 Extracted ${text.length} characters (clean!)`);
 
     const questions = await extractAllWithGPT4(text, reqId);
 
     if (!questions || questions.length === 0) {
-      updateProgress(reqId, 0, 'خطأ: لم يتم العثور على أسئلة');
-      progressStore.set(reqId, { 
-        progress: 0, 
-        error: 'لم يتم العثور على أسئلة',
-        timestamp: Date.now() 
+      clearProgress(reqId);
+      return res.status(400).json({
+        success: false,
+        error: 'لم يتم العثور على أسئلة'
       });
-      return;
     }
 
     updateProgress(reqId, 95, 'إنهاء...');
@@ -502,36 +456,41 @@ async function processInBackground(reqId, fileBuffer, start) {
     
     console.log(`${'='.repeat(60)}`);
     console.log(`✅ SUCCESS: ${questions.length} questions in ${time}s`);
+    console.log(`🔧 Extractor: PyMuPDF`);
+    console.log(`🤖 AI: GPT-4`);
     console.log(`${'='.repeat(60)}\n`);
 
-    // Store results
     updateProgress(reqId, 100, 'تم! ✅');
-    progressStore.set(reqId, {
-      progress: 100,
-      message: 'تم الانتهاء! ✅',
-      timestamp: Date.now(),
-      completed: true,
-      results: {
-        totalQuestions: questions.length,
-        chapters: chapters,
-        questions: questions,
-        processingTime: `${time}s`
-      }
-    });
+    setTimeout(() => clearProgress(reqId), 5000);
 
-    // Clear after 5 minutes
-    setTimeout(() => clearProgress(reqId), 5 * 60 * 1000);
+    res.json({
+      success: true,
+      requestId: reqId,
+      totalQuestions: questions.length,
+      chapters: chapters,
+      questions: questions,
+      processingTime: `${time}s`,
+      extractor: 'pymupdf',
+      model: 'gpt-4'
+    });
 
   } catch (error) {
-    console.error(`❌ Background processing [${reqId}]:`, error);
-    updateProgress(reqId, 0, `خطأ: ${error.message}`);
-    progressStore.set(reqId, { 
-      progress: 0, 
-      error: error.message,
-      timestamp: Date.now() 
+    console.error(`❌ [${reqId}]:`, error);
+    clearProgress(reqId);
+    
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        success: false,
+        error: `حجم الملف أكبر من ${MAX_PDF_SIZE_MB}MB`
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: error.message || 'حدث خطأ أثناء المعالجة'
     });
   }
-}
+});
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
