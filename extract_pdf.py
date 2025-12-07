@@ -64,11 +64,13 @@ class ArabicPDFExtractor:
         """Main extraction method"""
         try:
             doc = fitz.open(pdf_path)
-            print(f"📄 Processing {len(doc)} pages...", file=sys.stderr)
+            num_pages = len(doc)
+            print(f"📄 Processing {num_pages} pages...", file=sys.stderr)
             
             full_text = []
+            ocr_pages = []
             
-            for page_num in range(len(doc)):
+            for page_num in range(num_pages):
                 page = doc[page_num]
                 
                 # Try PyMuPDF first with proper layout
@@ -80,6 +82,7 @@ class ArabicPDFExtractor:
                     ocr_text = self._extract_with_ocr(page)
                     if ocr_text and len(ocr_text) > len(text):
                         text = ocr_text
+                        ocr_pages.append(page_num + 1)
                 
                 if text:
                     full_text.append(text)
@@ -92,7 +95,13 @@ class ArabicPDFExtractor:
             
             print(f"✅ Extracted {len(normalized)} characters", file=sys.stderr)
             
-            return normalized
+            # Return both text and metadata
+            return {
+                "text": normalized,
+                "pages": num_pages,
+                "ocr_pages": ocr_pages,
+                "length": len(normalized)
+            }
             
         except Exception as e:
             print(f"❌ Extraction error: {e}", file=sys.stderr)
@@ -286,6 +295,7 @@ def main():
     """Main entry point"""
     if len(sys.argv) != 2:
         print(json.dumps({
+            "success": False,
             "error": "Usage: python extract_pdf.py <pdf_file>"
         }))
         sys.exit(1)
@@ -294,22 +304,27 @@ def main():
     
     try:
         extractor = ArabicPDFExtractor(use_ocr=True)
-        text = extractor.extract(pdf_path)
+        result = extractor.extract(pdf_path)
         
-        # Output as JSON
-        result = {
-            "text": text,
-            "length": len(text),
-            "success": True
+        # Output as JSON (stdout only!)
+        output = {
+            "success": True,
+            "text": result["text"],
+            "length": result["length"],
+            "metadata": {
+                "pages": result["pages"],
+                "ocr_pages": result.get("ocr_pages", [])
+            }
         }
         
-        print(json.dumps(result, ensure_ascii=False))
+        print(json.dumps(output, ensure_ascii=False))
         
     except Exception as e:
+        # Print error to STDOUT (not stderr) so Node.js can parse it
         print(json.dumps({
-            "error": str(e),
-            "success": False
-        }), file=sys.stderr)
+            "success": False,
+            "error": str(e)
+        }))
         sys.exit(1)
 
 
