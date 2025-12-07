@@ -1,2 +1,0 @@
-# Python Dependencies for V7.0 PYMUPDF
-PyMuPDF==1.24.0
