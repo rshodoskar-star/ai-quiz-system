@@ -376,7 +376,10 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     await new Promise(r => setTimeout(r, 300));
     
     updateProgress(reqId, 25, 'استخراج النص (pdf.js)...');
-    const text = await extractTextWithPdfJs(req.file.buffer);
+    
+    // Convert Buffer to Uint8Array (pdf.js requirement)
+    const uint8Array = new Uint8Array(req.file.buffer);
+    const text = await extractTextWithPdfJs(uint8Array);
     
     if (!text || text.length < 100) {
       clearProgress(reqId);
