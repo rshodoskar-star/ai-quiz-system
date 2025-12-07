@@ -123,24 +123,36 @@ async function extractTextWithPyMuPDF(buffer) {
         }
         
         if (code !== 0) {
-          console.error('Python script failed:', errorOutput);
+          console.error('❌ Python script failed with code:', code);
+          console.error('Python stderr:', errorOutput);
           reject(new Error(`Python script failed with code ${code}`));
           return;
         }
+        
+        // Log raw output for debugging
+        console.log('📤 Python output length:', output.length);
         
         try {
           const result = JSON.parse(output);
           
           if (result.success) {
             console.log(`✅ PyMuPDF extracted: ${result.length} characters`);
-            console.log(`📑 Pages: ${result.metadata.pages}`);
+            if (result.metadata) {
+              console.log(`📑 Pages: ${result.metadata.pages}`);
+              if (result.metadata.ocr_pages && result.metadata.ocr_pages.length > 0) {
+                console.log(`📸 OCR used on pages: ${result.metadata.ocr_pages.join(', ')}`);
+              }
+            }
             resolve(result.text);
           } else {
+            console.error('❌ Extraction failed:', result.error);
             reject(new Error(result.error || 'Extraction failed'));
           }
         } catch (e) {
-          console.error('Failed to parse Python output:', output);
-          reject(new Error('Failed to parse extraction result'));
+          console.error('❌ Failed to parse Python output');
+          console.error('Raw output (first 500 chars):', output.substring(0, 500));
+          console.error('Parse error:', e.message);
+          reject(new Error('Failed to parse extraction result: ' + e.message));
         }
       });
       
