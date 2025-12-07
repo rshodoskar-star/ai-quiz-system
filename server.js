@@ -241,7 +241,7 @@ const GPT_PROMPT = `Ø£Ù†Øª Ø®Ø¨ÙŠØ± ÙÙŠ Ø§Ø³ØªØ®Ø±
 - Ø£Ø®Ø±Ø¬ JSON ÙÙ‚Ø·
 - Ø§Ù„Ù†Øµ Ù†Ø¸ÙŠÙØŒ Ù„Ø§ ØªØºÙŠØ±Ù‡`;
 
-async function extractWithGPT4(chunk, index, total, reqId) {
+async function extractWithGPT4(chunk, index, total, requestId) {
   try {
     console.log(`ðŸ¤– [GPT-4] Processing chunk ${index + 1}/${total}`);
     
@@ -288,10 +288,10 @@ async function extractWithGPT4(chunk, index, total, reqId) {
   }
 }
 
-async function extractAllWithGPT4(text, reqId) {
+async function extractAllWithGPT4(text, requestId) {
   try {
     const chunks = smartSplit(text, CHUNK_SIZE);
-    updateProgress(reqId, 50, `Ù…Ø¹Ø§Ù„Ø¬Ø© ${chunks.length} Ø£Ø¬Ø²Ø§Ø¡...`);
+    updateProgress(requestId, 50, `Ù…Ø¹Ø§Ù„Ø¬Ø© ${chunks.length} Ø£Ø¬Ø²Ø§Ø¡...`);
     
     const PARALLEL_LIMIT = 3;
     const allQuestions = [];
@@ -299,10 +299,10 @@ async function extractAllWithGPT4(text, reqId) {
     for (let i = 0; i < chunks.length; i += PARALLEL_LIMIT) {
       const batch = chunks.slice(i, i + PARALLEL_LIMIT);
       const progress = 50 + Math.round((i / chunks.length) * 45);
-      updateProgress(reqId, progress, `Ù…Ø¹Ø§Ù„Ø¬Ø©... (${i + 1}/${chunks.length})`);
+      updateProgress(requestId, progress, `Ù…Ø¹Ø§Ù„Ø¬Ø©... (${i + 1}/${chunks.length})`);
       
       const promises = batch.map((chunk, idx) => 
-        extractWithGPT4(chunk, i + idx, chunks.length, reqId)
+        extractWithGPT4(chunk, i + idx, chunks.length, requestId)
       );
       
       const results = await Promise.all(promises);
@@ -412,7 +412,6 @@ app.get('/api/progress/:requestId', (req, res) => {
 app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     let requestId = req.headers['x-request-id'] || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   const start = Date.now();
-  const reqId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   try {
     updateProgress(requestId, 10, 'رفع الملف...');
@@ -422,18 +421,18 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`ðŸš€ V7.0 PYMUPDF [${reqId}]`);
+    console.log(`ðŸš€ V7.0 PYMUPDF [${requestId}]`);
     console.log(`ðŸ“„ ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
-    updateProgress(reqId, 10, 'Ø±ÙØ¹ Ø§Ù„Ù…Ù„Ù...');
+    updateProgress(requestId, 10, 'Ø±ÙØ¹ Ø§Ù„Ù…Ù„Ù...');
     await new Promise(r => setTimeout(r, 300));
     
-    updateProgress(reqId, 25, 'Ø§Ø³ØªØ®Ø±Ø§Ø¬ Ø§Ù„Ù†Øµ (PyMuPDF)...');
+    updateProgress(requestId, 25, 'Ø§Ø³ØªØ®Ø±Ø§Ø¬ Ø§Ù„Ù†Øµ (PyMuPDF)...');
     const text = await extractTextWithPyMuPDF(req.file.buffer);
     
     if (!text || text.length < 100) {
-      clearProgress(reqId);
+      clearProgress(requestId);
       return res.status(400).json({
         success: false,
         error: 'Ø§Ù„Ù…Ù„Ù Ù„Ø§ ÙŠØ­ØªÙˆÙŠ Ø¹Ù„Ù‰ Ù†Øµ ÙƒØ§ÙÙ'
@@ -442,17 +441,17 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
 
     console.log(`ðŸ“ Extracted ${text.length} characters (clean!)`);
 
-    const questions = await extractAllWithGPT4(text, reqId);
+    const questions = await extractAllWithGPT4(text, requestId);
 
     if (!questions || questions.length === 0) {
-      clearProgress(reqId);
+      clearProgress(requestId);
       return res.status(400).json({
         success: false,
         error: 'Ù„Ù… ÙŠØªÙ… Ø§Ù„Ø¹Ø«ÙˆØ± Ø¹Ù„Ù‰ Ø£Ø³Ø¦Ù„Ø©'
       });
     }
 
-    updateProgress(reqId, 95, 'Ø¥Ù†Ù‡Ø§Ø¡...');
+    updateProgress(requestId, 95, 'Ø¥Ù†Ù‡Ø§Ø¡...');
     
     const chapters = [...new Set(questions.map(q => q.chapter).filter(Boolean))];
     const time = ((Date.now() - start) / 1000).toFixed(2);
@@ -463,12 +462,12 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     console.log(`ðŸ¤– AI: GPT-4`);
     console.log(`${'='.repeat(60)}\n`);
 
-    updateProgress(reqId, 100, 'ØªÙ…! âœ…');
-    setTimeout(() => clearProgress(reqId), 5000);
+    updateProgress(requestId, 100, 'ØªÙ…! âœ…');
+    setTimeout(() => clearProgress(requestId), 5000);
 
     res.json({
       success: true,
-      requestId: reqId,
+      requestId: requestId,
       totalQuestions: questions.length,
       chapters: chapters,
       questions: questions,
@@ -478,8 +477,8 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     });
 
   } catch (error) {
-    console.error(`âŒ [${reqId}]:`, error);
-    clearProgress(reqId);
+    console.error(`âŒ [${requestId}]:`, error);
+    clearProgress(requestId);
     
     if (error.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({
