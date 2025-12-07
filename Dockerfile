@@ -1,15 +1,24 @@
+# ====================================
+# AI Quiz System V8.0 - Professional Dockerfile
+# Python 3.10 + Node.js 20 + PaddleOCR
+# ====================================
+
 FROM python:3.10-slim
 
-# Fix system dependencies
+# Install system dependencies for PaddleOCR and OpenCV
 RUN apt-get update && apt-get install -y \
+    curl \
     git \
     build-essential \
+    # OpenCV and image processing dependencies
     libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxrender1 \
     libxext6 \
+    libgomp1 \
     libstdc++6 \
+    # Image format libraries
     libjpeg62-turbo \
     libpng16-16 \
     libfreetype6 \
@@ -17,25 +26,47 @@ RUN apt-get update && apt-get install -y \
     libwebp7 \
     libtiff6 \
     libopenjp2-7 \
+    # X11 libraries
     libxcb1 \
-    && apt-get clean \
+    libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Install Node.js 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Set working directory
 WORKDIR /app
 
-COPY requirements.txt /app/
-
+# Copy and install Python dependencies
+COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel
 
-# Install OCR + PDF + ML libs
-RUN pip install paddlepaddle==2.5.2 -i https://mirror.baidu.com/pypi/simple \
-    && pip install paddleocr \
-    && pip install opencv-python-headless \
-    && pip install PyMuPDF ftfy regex fastapi uvicorn python-multipart
+# Install PaddlePaddle and OCR
+RUN pip install --no-cache-dir paddlepaddle==2.5.2 -i https://mirror.baidu.com/pypi/simple \
+    && pip install --no-cache-dir paddleocr opencv-python-headless
 
-# Copy app
-COPY . /app
+# Install remaining Python packages
+RUN pip install --no-cache-dir -r requirements.txt
 
-EXPOSE 8000
+# Download PaddleOCR Arabic model (optional - speeds up first request)
+RUN python3 -c "from paddleocr import PaddleOCR; ocr = PaddleOCR(lang='ar', show_log=False)" || true
 
-CMD ["python3", "server-v8.0-PROFESSIONAL.js"]
+# Copy and install Node.js dependencies
+COPY package.json .
+RUN npm install --production
+
+# Copy application code
+COPY . .
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Start Node.js server
+CMD ["node", "server.js"]
