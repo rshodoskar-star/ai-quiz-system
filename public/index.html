@@ -744,27 +744,23 @@
         // ====================================
 
         const progressStages = [
-            { start: 0, end: 10, speed: 0.3, text: 'Ø±ÙØ¹ Ø§Ù„Ù…Ù„Ù...' },
-            { start: 10, end: 25, speed: 0.2, text: 'Ø§Ø³ØªØ®Ø±Ø§Ø¬ Ø§Ù„Ù†Øµ Ù…Ù† PDF...' },
-            { start: 25, end: 45, speed: 0.15, text: 'ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ù…Ø­ØªÙˆÙ‰...' },
-            { start: 45, end: 65, speed: 0.12, text: 'Ø§Ù„Ø¨Ø­Ø« Ø¹Ù† Ø§Ù„Ø£Ø³Ø¦Ù„Ø©...' },
-            { start: 65, end: 80, speed: 0.08, text: 'Ø§Ø³ØªØ®Ø±Ø§Ø¬ Ø§Ù„Ø®ÙŠØ§Ø±Ø§Øª...' },
-            { start: 80, end: 90, speed: 0.05, text: 'Ø§Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Ø§Ù„Ø¬ÙˆØ¯Ø©...' }
+            { start: 0, end: 15, speed: 1.5, text: 'Ø±ÙØ¹ Ø§Ù„Ù…Ù„Ù...' },
+            { start: 15, end: 35, speed: 0.8, text: 'Ø§Ø³ØªØ®Ø±Ø§Ø¬ Ø§Ù„Ù†Øµ Ù…Ù† PDF...' },
+            { start: 35, end: 55, speed: 0.5, text: 'ØªØ­Ù„ÙŠÙ„ Ø§Ù„Ù…Ø­ØªÙˆÙ‰...' },
+            { start: 55, end: 70, speed: 0.4, text: 'Ø§Ù„Ø¨Ø­Ø« Ø¹Ù† Ø§Ù„Ø£Ø³Ø¦Ù„Ø©...' },
+            { start: 70, end: 85, speed: 0.3, text: 'Ø§Ø³ØªØ®Ø±Ø§Ø¬ Ø§Ù„Ø®ÙŠØ§Ø±Ø§Øª...' },
+            { start: 85, end: 92, speed: 0.2, text: 'Ø§Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Ø§Ù„Ø¬ÙˆØ¯Ø©...' }
         ];
 
         let currentProgress = 0;
         let currentStageIndex = 0;
         let progressInterval = null;
         let processingComplete = false;
-        let progressPollInterval = null;
-        let serverProgress = 0;
-        let currentRequestId = null;
 
         function startSmartProgress() {
             currentProgress = 0;
             currentStageIndex = 0;
             processingComplete = false;
-            serverProgress = 0;
             
             const progressFill = document.getElementById('progressBarFill');
             const progressText = document.getElementById('progressText');
@@ -796,9 +792,8 @@
                     }
                 }
                 
-                const displayProgress = Math.max(currentProgress, serverProgress);
-                progressFill.style.width = displayProgress + '%';
-                progressText.textContent = Math.round(displayProgress) + '%';
+                progressFill.style.width = currentProgress + '%';
+                progressText.textContent = Math.round(currentProgress) + '%';
                 
             }, 100);
         }
@@ -829,54 +824,6 @@
             progressStage.textContent = 'âœ… Ø§ÙƒØªÙ…Ù„ Ø§Ù„Ø§Ø³ØªØ®Ø±Ø§Ø¬!';
         }
 
-        function pollServerProgress(requestId) {
-            progressPollInterval = setInterval(async () => {
-                try {
-                    const res = await fetch(`${API_URL}/api/progress/${requestId}`);
-                    const data = await res.json();
-                    
-                    if (data.progress > 0) {
-                        serverProgress = data.progress;
-                        
-                        if (serverProgress > currentProgress) {
-                            currentProgress = serverProgress;
-                            document.getElementById('progressBarFill').style.width = serverProgress + '%';
-                            document.getElementById('progressText').textContent = Math.round(serverProgress) + '%';
-                        }
-                        
-                        if (data.message) {
-                            document.getElementById('progressStage').textContent = data.message;
-                        }
-                    }
-                    
-                    if (data.progress >= 100) {
-                        clearInterval(progressPollInterval);
-                        processingComplete = true;
-                    }
-                    
-                    if (data.error) {
-                        clearInterval(progressPollInterval);
-                        clearInterval(progressInterval);
-                        hideLoading();
-                        showAlert(data.message || 'حدث خطأ أثناء المعالجة', 'error');
-                    }
-                } catch (err) {
-                    console.error('Poll error:', err);
-                }
-            }, 1000);
-        }
-
-        function stopProgressPolling() {
-            if (progressPollInterval) {
-                clearInterval(progressPollInterval);
-                progressPollInterval = null;
-            }
-            if (progressInterval) {
-                clearInterval(progressInterval);
-                progressInterval = null;
-            }
-        }
-
         // ====================================
         // File Upload Handler
         // ====================================
@@ -896,11 +843,8 @@
             }
 
             // Start smart progress
-            currentRequestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
             showLoading();
             startSmartProgress();
-            pollServerProgress(currentRequestId);
 
             const formData = new FormData();
             formData.append('file', file);
@@ -908,10 +852,7 @@
             try {
                 const response = await fetch(`${API_URL}/api/quiz-from-pdf`, {
                     method: 'POST',
-                    body: formData,
-                    headers: {
-                        'X-Request-ID': currentRequestId
-                    }
+                    body: formData
                 });
 
                 const data = await response.json();
@@ -935,9 +876,9 @@
                 }
 
             } catch (error) {
-                console.error('Upload error:', error);
-                stopProgressPolling();
                 hideLoading();
+                clearInterval(progressInterval);
+                console.error('Upload error:', error);
                 showAlert('Ø­Ø¯Ø« Ø®Ø·Ø£ ÙÙŠ Ø§Ù„Ø§ØªØµØ§Ù„ Ø¨Ø§Ù„Ø®Ø§Ø¯Ù…', 'error');
             }
         }
