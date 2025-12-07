@@ -35,7 +35,7 @@ function updateProgress(requestId, progress, message) {
 }
 
 function getProgress(requestId) {
-  return progressStore.get(requestId) || { progress: 0, message: 'Ø¬Ø§Ø±ÙŠ Ø§Ù„Ø¨Ø¯Ø¡...' };
+  return progressStore.get(requestId) || { progress: 0, message: 'جاري البدء...' };
 }
 
 function clearProgress(requestId) {
@@ -65,7 +65,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 const limiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 10,
-  message: { success: false, error: 'ØªÙ… ØªØ¬Ø§ÙˆØ² Ø§Ù„Ø­Ø¯ Ø§Ù„Ø£Ù‚ØµÙ‰' }
+  message: { success: false, error: 'تم تجاوز الحد الأقصى' }
 });
 
 app.use('/api/', limiter);
@@ -78,7 +78,7 @@ const upload = multer({
     if (file.mimetype === 'application/pdf') {
       cb(null, true);
     } else {
-      cb(new Error('ÙŠØ¬Ø¨ Ø£Ù† ÙŠÙƒÙˆÙ† Ø§Ù„Ù…Ù„Ù PDF'));
+      cb(new Error('يجب أن يكون الملف PDF'));
     }
   }
 });
@@ -94,7 +94,7 @@ async function extractTextWithPyMuPDF(buffer) {
       const tempPath = `/tmp/temp_${Date.now()}.pdf`;
       fs.writeFileSync(tempPath, buffer);
       
-      console.log('ðŸ“„ Calling Python PyMuPDF extractor...');
+      console.log('📄 Calling Python PyMuPDF extractor...');
       
       // Call Python script
       const python = spawn('python3', [
@@ -132,8 +132,8 @@ async function extractTextWithPyMuPDF(buffer) {
           const result = JSON.parse(output);
           
           if (result.success) {
-            console.log(`âœ… PyMuPDF extracted: ${result.length} characters`);
-            console.log(`ðŸ“‘ Pages: ${result.metadata.pages}`);
+            console.log(`✅ PyMuPDF extracted: ${result.length} characters`);
+            console.log(`📑 Pages: ${result.metadata.pages}`);
             resolve(result.text);
           } else {
             reject(new Error(result.error || 'Extraction failed'));
@@ -160,11 +160,11 @@ function smartSplit(text, chunkSize) {
   
   const questionPatterns = [
     /(?=(?:\n|^)\s*\d+[\.\):])/g,
-    /(?=(?:\n|^)\s*Ø³\s*\d+)/g,
-    /(?=(?:\n|^)\s*Ø³Ø¤Ø§Ù„\s*\d+)/g,
+    /(?=(?:\n|^)\s*س\s*\d+)/g,
+    /(?=(?:\n|^)\s*سؤال\s*\d+)/g,
     /(?=(?:\n|^)\s*Q\d+)/gi,
     /(?=(?:\n|^)\s*\(\d+\))/g,
-    /(?=(?:\n|^)\s*Ø³(?:Ø¤Ø§Ù„)?\s*\d+)/g
+    /(?=(?:\n|^)\s*س(?:ؤال)?\s*\d+)/g
   ];
   
   let bestSplit = null;
@@ -179,7 +179,7 @@ function smartSplit(text, chunkSize) {
   }
   
   if (bestSplit && bestSplit.length > 1) {
-    console.log(`ðŸ“Š Detected ${bestSplit.length} question blocks`);
+    console.log(`📊 Detected ${bestSplit.length} question blocks`);
     let current = '';
     let lastChunk = '';
     
@@ -198,14 +198,14 @@ function smartSplit(text, chunkSize) {
     if (current) chunks.push(current.trim());
   } else {
     // Fallback: split with overlap
-    console.log(`âš ï¸ No question patterns detected, using overlap splitting`);
+    console.log(`⚠️ No question patterns detected, using overlap splitting`);
     for (let i = 0; i < text.length; i += chunkSize - OVERLAP) {
       const chunk = text.substring(i, i + chunkSize);
       if (chunk.trim()) chunks.push(chunk.trim());
     }
   }
   
-  console.log(`ðŸ“¦ Split into ${chunks.length} chunks (with overlap)`);
+  console.log(`📦 Split into ${chunks.length} chunks (with overlap)`);
   return chunks;
 }
 
@@ -213,37 +213,37 @@ function smartSplit(text, chunkSize) {
 // GPT-4 Extraction
 // ====================================
 
-const GPT_PROMPT = `Ø£Ù†Øª Ø®Ø¨ÙŠØ± ÙÙŠ Ø§Ø³ØªØ®Ø±Ø§Ø¬ Ø£Ø³Ø¦Ù„Ø© Ø§Ù„Ø§Ø®ØªÙŠØ§Ø± Ù…Ù† Ù…ØªØ¹Ø¯Ø¯ Ù…Ù† Ø§Ù„Ù†ØµÙˆØµ Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©.
+const GPT_PROMPT = `أنت خبير في استخراج أسئلة الاختيار من متعدد من النصوص العربية.
 
-Ø§Ù„Ù†Øµ Ø§Ù„Ù…Ù‚Ø¯Ù… Ù†Ø¸ÙŠÙ ÙˆÙ…Ø³ØªØ®Ø±Ø¬ Ø¨Ø¬ÙˆØ¯Ø© Ø¹Ø§Ù„ÙŠØ© (PyMuPDF).
+النص المقدم نظيف ومستخرج بجودة عالية (PyMuPDF).
 
-Ù…Ù‡Ù…ØªÙƒ Ø§Ù„Ø­Ø§Ø³Ù…Ø©:
-1. Ø§Ø³ØªØ®Ø±Ø¬ **ÙƒÙ„** Ø£Ø³Ø¦Ù„Ø© Ø§Ù„Ø§Ø®ØªÙŠØ§Ø± Ù…Ù† Ù…ØªØ¹Ø¯Ø¯ - Ù„Ø§ ØªØªØ±Ùƒ Ø£ÙŠ Ø³Ø¤Ø§Ù„!
-2. Ø¥Ø°Ø§ Ø±Ø£ÙŠØª Ø±Ù‚Ù… Ø³Ø¤Ø§Ù„ (1. Ø£Ùˆ Ø³1 Ø£Ùˆ Ø³Ø¤Ø§Ù„ 1)ØŒ Ø§Ø³ØªØ®Ø±Ø¬Ù‡
-3. Ø§Ø­ØªÙØ¸ Ø¨Ø§Ù„Ù†Øµ ÙƒÙ…Ø§ Ù‡Ùˆ (Ù†Ø¸ÙŠÙ Ø¨Ø§Ù„ÙØ¹Ù„)
-4. ØªØ£ÙƒØ¯ Ù…Ù† Ø§Ø³ØªØ®Ø±Ø§Ø¬ ÙƒÙ„ Ø³Ø¤Ø§Ù„ ÙÙŠ Ù‡Ø°Ø§ Ø§Ù„Ø¬Ø²Ø¡
+مهمتك الحاسمة:
+1. استخرج **كل** أسئلة الاختيار من متعدد - لا تترك أي سؤال!
+2. إذا رأيت رقم سؤال (1. أو س1 أو سؤال 1)، استخرجه
+3. احتفظ بالنص كما هو (نظيف بالفعل)
+4. تأكد من استخراج كل سؤال في هذا الجزء
 
-Ø£Ø®Ø±Ø¬ JSON object Ø¨Ù‡Ø°Ø§ Ø§Ù„Ø´ÙƒÙ„ ÙÙ‚Ø·:
+أخرج JSON object بهذا الشكل فقط:
 {
   "questions": [
     {
-      "chapter": "Ø§Ø³Ù… Ø§Ù„ÙØµÙ„ (Ø¥Ù† ÙˆØ¬Ø¯)",
-      "question": "Ù†Øµ Ø§Ù„Ø³Ø¤Ø§Ù„",
-      "options": ["Ø®ÙŠØ§Ø± 1", "Ø®ÙŠØ§Ø± 2", "Ø®ÙŠØ§Ø± 3", "Ø®ÙŠØ§Ø± 4"],
+      "chapter": "اسم الفصل (إن وجد)",
+      "question": "نص السؤال",
+      "options": ["خيار 1", "خيار 2", "خيار 3", "خيار 4"],
       "correct": 0
     }
   ]
 }
 
-Ù…Ù‡Ù… Ø¬Ø¯Ø§Ù‹:
-- Ø§Ø³ØªØ®Ø±Ø¬ **Ø¬Ù…ÙŠØ¹** Ø§Ù„Ø£Ø³Ø¦Ù„Ø© ÙÙŠ Ù‡Ø°Ø§ Ø§Ù„Ø¬Ø²Ø¡
-- Ù„Ø§ ØªØªÙˆÙ‚Ù Ø­ØªÙ‰ ØªÙ†ØªÙ‡ÙŠ Ù…Ù† ÙƒÙ„ Ø§Ù„Ø£Ø³Ø¦Ù„Ø©
-- Ø£Ø®Ø±Ø¬ JSON ÙÙ‚Ø·
-- Ø§Ù„Ù†Øµ Ù†Ø¸ÙŠÙØŒ Ù„Ø§ ØªØºÙŠØ±Ù‡`;
+مهم جداً:
+- استخرج **جميع** الأسئلة في هذا الجزء
+- لا تتوقف حتى تنتهي من كل الأسئلة
+- أخرج JSON فقط
+- النص نظيف، لا تغيره`;
 
 async function extractWithGPT4(chunk, index, total, reqId) {
   try {
-    console.log(`ðŸ¤– [GPT-4] Processing chunk ${index + 1}/${total}`);
+    console.log(`🤖 [GPT-4] Processing chunk ${index + 1}/${total}`);
     
     const completion = await openai.chat.completions.create({
       model: GPT_MODEL,
@@ -255,7 +255,7 @@ async function extractWithGPT4(chunk, index, total, reqId) {
         },
         {
           role: 'user',
-          content: `Ø§Ø³ØªØ®Ø±Ø¬ Ø£Ø³Ø¦Ù„Ø© Ø§Ù„Ø§Ø®ØªÙŠØ§Ø± Ù…Ù† Ù…ØªØ¹Ø¯Ø¯:\n\n${chunk}`
+          content: `استخرج أسئلة الاختيار من متعدد:\n\n${chunk}`
         }
       ],
       temperature: 0.2,
@@ -270,20 +270,20 @@ async function extractWithGPT4(chunk, index, total, reqId) {
       questions = parsed.questions || parsed.Questions || [];
       
       if (!Array.isArray(questions)) {
-        console.warn('âš ï¸ Questions is not an array');
+        console.warn('⚠️ Questions is not an array');
         questions = [];
       }
     } catch (e) {
-      console.error(`âŒ JSON parse error:`, e.message);
+      console.error(`❌ JSON parse error:`, e.message);
     }
     
     const validated = validateQuestions(questions);
-    console.log(`âœ… [GPT-4] Chunk ${index + 1}: ${validated.length} questions`);
+    console.log(`✅ [GPT-4] Chunk ${index + 1}: ${validated.length} questions`);
     
     return validated;
     
   } catch (error) {
-    console.error(`âŒ [GPT-4] Chunk ${index + 1}:`, error.message);
+    console.error(`❌ [GPT-4] Chunk ${index + 1}:`, error.message);
     return [];
   }
 }
@@ -291,7 +291,7 @@ async function extractWithGPT4(chunk, index, total, reqId) {
 async function extractAllWithGPT4(text, reqId) {
   try {
     const chunks = smartSplit(text, CHUNK_SIZE);
-    updateProgress(reqId, 50, `Ù…Ø¹Ø§Ù„Ø¬Ø© ${chunks.length} Ø£Ø¬Ø²Ø§Ø¡...`);
+    updateProgress(reqId, 50, `معالجة ${chunks.length} أجزاء...`);
     
     const PARALLEL_LIMIT = 3;
     const allQuestions = [];
@@ -299,7 +299,7 @@ async function extractAllWithGPT4(text, reqId) {
     for (let i = 0; i < chunks.length; i += PARALLEL_LIMIT) {
       const batch = chunks.slice(i, i + PARALLEL_LIMIT);
       const progress = 50 + Math.round((i / chunks.length) * 45);
-      updateProgress(reqId, progress, `Ù…Ø¹Ø§Ù„Ø¬Ø©... (${i + 1}/${chunks.length})`);
+      updateProgress(reqId, progress, `معالجة... (${i + 1}/${chunks.length})`);
       
       const promises = batch.map((chunk, idx) => 
         extractWithGPT4(chunk, i + idx, chunks.length, reqId)
@@ -308,19 +308,19 @@ async function extractAllWithGPT4(text, reqId) {
       const results = await Promise.all(promises);
       allQuestions.push(...results.flat());
       
-      console.log(`ðŸ“Š Progress: ${allQuestions.length} questions so far`);
+      console.log(`📊 Progress: ${allQuestions.length} questions so far`);
       
       if (i + PARALLEL_LIMIT < chunks.length) {
         await new Promise(r => setTimeout(r, 500));
       }
     }
     
-    console.log(`ðŸ“‹ Before deduplication: ${allQuestions.length} questions`);
+    console.log(`📋 Before deduplication: ${allQuestions.length} questions`);
     
     // Deduplicate questions (due to overlap)
     const deduplicated = deduplicateQuestions(allQuestions);
     
-    console.log(`âœ… After deduplication: ${deduplicated.length} questions`);
+    console.log(`✅ After deduplication: ${deduplicated.length} questions`);
     return deduplicated;
     
   } catch (error) {
@@ -345,7 +345,7 @@ function deduplicateQuestions(questions) {
       seen.add(normalized);
       unique.push(q);
     } else {
-      console.log(`âš ï¸ Skipped duplicate: ${q.question.substring(0, 50)}...`);
+      console.log(`⚠️ Skipped duplicate: ${q.question.substring(0, 50)}...`);
     }
   }
   
@@ -410,37 +410,34 @@ app.get('/api/progress/:requestId', (req, res) => {
 });
 
 app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
-    let requestId = req.headers['x-request-id'] || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   const start = Date.now();
   const reqId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   try {
-    updateProgress(requestId, 10, 'رفع الملف...');
-    
     if (!req.file) {
-      return res.status(400).json({ success: false, error: 'Ù„Ù… ÙŠØªÙ… Ø±ÙØ¹ Ù…Ù„Ù' });
+      return res.status(400).json({ success: false, error: 'لم يتم رفع ملف' });
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`ðŸš€ V7.0 PYMUPDF [${reqId}]`);
-    console.log(`ðŸ“„ ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
+    console.log(`🚀 V7.0 PYMUPDF [${reqId}]`);
+    console.log(`📄 ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
-    updateProgress(reqId, 10, 'Ø±ÙØ¹ Ø§Ù„Ù…Ù„Ù...');
+    updateProgress(reqId, 10, 'رفع الملف...');
     await new Promise(r => setTimeout(r, 300));
     
-    updateProgress(reqId, 25, 'Ø§Ø³ØªØ®Ø±Ø§Ø¬ Ø§Ù„Ù†Øµ (PyMuPDF)...');
+    updateProgress(reqId, 25, 'استخراج النص (PyMuPDF)...');
     const text = await extractTextWithPyMuPDF(req.file.buffer);
     
     if (!text || text.length < 100) {
       clearProgress(reqId);
       return res.status(400).json({
         success: false,
-        error: 'Ø§Ù„Ù…Ù„Ù Ù„Ø§ ÙŠØ­ØªÙˆÙŠ Ø¹Ù„Ù‰ Ù†Øµ ÙƒØ§ÙÙ'
+        error: 'الملف لا يحتوي على نص كافٍ'
       });
     }
 
-    console.log(`ðŸ“ Extracted ${text.length} characters (clean!)`);
+    console.log(`📝 Extracted ${text.length} characters (clean!)`);
 
     const questions = await extractAllWithGPT4(text, reqId);
 
@@ -448,22 +445,22 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
       clearProgress(reqId);
       return res.status(400).json({
         success: false,
-        error: 'Ù„Ù… ÙŠØªÙ… Ø§Ù„Ø¹Ø«ÙˆØ± Ø¹Ù„Ù‰ Ø£Ø³Ø¦Ù„Ø©'
+        error: 'لم يتم العثور على أسئلة'
       });
     }
 
-    updateProgress(reqId, 95, 'Ø¥Ù†Ù‡Ø§Ø¡...');
+    updateProgress(reqId, 95, 'إنهاء...');
     
     const chapters = [...new Set(questions.map(q => q.chapter).filter(Boolean))];
     const time = ((Date.now() - start) / 1000).toFixed(2);
     
     console.log(`${'='.repeat(60)}`);
-    console.log(`âœ… SUCCESS: ${questions.length} questions in ${time}s`);
-    console.log(`ðŸ”§ Extractor: PyMuPDF`);
-    console.log(`ðŸ¤– AI: GPT-4`);
+    console.log(`✅ SUCCESS: ${questions.length} questions in ${time}s`);
+    console.log(`🔧 Extractor: PyMuPDF`);
+    console.log(`🤖 AI: GPT-4`);
     console.log(`${'='.repeat(60)}\n`);
 
-    updateProgress(reqId, 100, 'ØªÙ…! âœ…');
+    updateProgress(reqId, 100, 'تم! ✅');
     setTimeout(() => clearProgress(reqId), 5000);
 
     res.json({
@@ -478,19 +475,19 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     });
 
   } catch (error) {
-    console.error(`âŒ [${reqId}]:`, error);
+    console.error(`❌ [${reqId}]:`, error);
     clearProgress(reqId);
     
     if (error.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({
         success: false,
-        error: `Ø­Ø¬Ù… Ø§Ù„Ù…Ù„Ù Ø£ÙƒØ¨Ø± Ù…Ù† ${MAX_PDF_SIZE_MB}MB`
+        error: `حجم الملف أكبر من ${MAX_PDF_SIZE_MB}MB`
       });
     }
 
     res.status(500).json({
       success: false,
-      error: error.message || 'Ø­Ø¯Ø« Ø®Ø·Ø£ Ø£Ø«Ù†Ø§Ø¡ Ø§Ù„Ù…Ø¹Ø§Ù„Ø¬Ø©'
+      error: error.message || 'حدث خطأ أثناء المعالجة'
     });
   }
 });
@@ -506,17 +503,17 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('ðŸš€ AI Quiz System V8.0 PROFESSIONAL');
+  console.log('🚀 AI Quiz System V8.0 PROFESSIONAL');
   console.log('='.repeat(60));
-  console.log(`ðŸ“¡ Port: ${PORT}`);
-  console.log(`ðŸ”§ Extractor: PyMuPDF + PaddleOCR (98%+ accuracy)`);
-  console.log(`ðŸ¤– AI Model: ${GPT_MODEL}`);
-  console.log('â­ Professional Pipeline:');
-  console.log('   1. PyMuPDF â†’ Layout-aware extraction');
-  console.log('   2. Block ordering â†’ RTL support');
-  console.log('   3. PaddleOCR â†’ Scanned pages fallback');
-  console.log('   4. Normalization â†’ Clean Arabic text');
-  console.log('   5. GPT-4 â†’ Question extraction');
+  console.log(`📡 Port: ${PORT}`);
+  console.log(`🔧 Extractor: PyMuPDF + PaddleOCR (98%+ accuracy)`);
+  console.log(`🤖 AI Model: ${GPT_MODEL}`);
+  console.log('⭐ Professional Pipeline:');
+  console.log('   1. PyMuPDF → Layout-aware extraction');
+  console.log('   2. Block ordering → RTL support');
+  console.log('   3. PaddleOCR → Scanned pages fallback');
+  console.log('   4. Normalization → Clean Arabic text');
+  console.log('   5. GPT-4 → Question extraction');
   console.log('   6. Result: 98%+ accuracy, 140-145 questions!');
   console.log('='.repeat(60) + '\n');
 });
