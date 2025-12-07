@@ -35,7 +35,13 @@ function updateProgress(requestId, progress, message) {
 }
 
 function getProgress(requestId) {
-  return progressStore.get(requestId) || { progress: 0, message: 'جاري البدء...' };
+  const data = progressStore.get(requestId);
+  if (!data) {
+    return { progress: 0, message: 'جاري البدء...' };
+  }
+  
+  // Return full data including results if completed
+  return data;
 }
 
 function clearProgress(requestId) {
@@ -431,34 +437,62 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 V7.0 PYMUPDF [${reqId}]`);
+    console.log(`🚀 V8.0 [${reqId}]`);
     console.log(`📄 ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)}KB)`);
     console.log('='.repeat(60));
 
+    // Return requestId immediately for polling
+    res.json({
+      success: true,
+      requestId: reqId,
+      message: 'جاري المعالجة...'
+    });
+
+    // Continue processing in background
+    processInBackground(reqId, req.file.buffer, start);
+
+  } catch (error) {
+    console.error(`❌ [${reqId}]:`, error);
+    clearProgress(reqId);
+    
+    res.status(500).json({
+      success: false,
+      error: error.message || 'حدث خطأ أثناء المعالجة'
+    });
+  }
+});
+
+// Background processing
+async function processInBackground(reqId, fileBuffer, start) {
+  try {
     updateProgress(reqId, 10, 'رفع الملف...');
     await new Promise(r => setTimeout(r, 300));
     
     updateProgress(reqId, 25, 'استخراج النص (PyMuPDF)...');
-    const text = await extractTextWithPyMuPDF(req.file.buffer);
+    const text = await extractTextWithPyMuPDF(fileBuffer);
     
     if (!text || text.length < 100) {
-      clearProgress(reqId);
-      return res.status(400).json({
-        success: false,
-        error: 'الملف لا يحتوي على نص كافٍ'
+      updateProgress(reqId, 0, 'خطأ: الملف لا يحتوي على نص كافٍ');
+      progressStore.set(reqId, { 
+        progress: 0, 
+        error: 'الملف لا يحتوي على نص كافٍ',
+        timestamp: Date.now() 
       });
+      return;
     }
 
-    console.log(`📝 Extracted ${text.length} characters (clean!)`);
+    console.log(`📝 Extracted ${text.length} characters`);
 
     const questions = await extractAllWithGPT4(text, reqId);
 
     if (!questions || questions.length === 0) {
-      clearProgress(reqId);
-      return res.status(400).json({
-        success: false,
-        error: 'لم يتم العثور على أسئلة'
+      updateProgress(reqId, 0, 'خطأ: لم يتم العثور على أسئلة');
+      progressStore.set(reqId, { 
+        progress: 0, 
+        error: 'لم يتم العثور على أسئلة',
+        timestamp: Date.now() 
       });
+      return;
     }
 
     updateProgress(reqId, 95, 'إنهاء...');
@@ -468,41 +502,36 @@ app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
     
     console.log(`${'='.repeat(60)}`);
     console.log(`✅ SUCCESS: ${questions.length} questions in ${time}s`);
-    console.log(`🔧 Extractor: PyMuPDF`);
-    console.log(`🤖 AI: GPT-4`);
     console.log(`${'='.repeat(60)}\n`);
 
+    // Store results
     updateProgress(reqId, 100, 'تم! ✅');
-    setTimeout(() => clearProgress(reqId), 5000);
-
-    res.json({
-      success: true,
-      requestId: reqId,
-      totalQuestions: questions.length,
-      chapters: chapters,
-      questions: questions,
-      processingTime: `${time}s`,
-      extractor: 'pymupdf',
-      model: 'gpt-4'
+    progressStore.set(reqId, {
+      progress: 100,
+      message: 'تم الانتهاء! ✅',
+      timestamp: Date.now(),
+      completed: true,
+      results: {
+        totalQuestions: questions.length,
+        chapters: chapters,
+        questions: questions,
+        processingTime: `${time}s`
+      }
     });
+
+    // Clear after 5 minutes
+    setTimeout(() => clearProgress(reqId), 5 * 60 * 1000);
 
   } catch (error) {
-    console.error(`❌ [${reqId}]:`, error);
-    clearProgress(reqId);
-    
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        success: false,
-        error: `حجم الملف أكبر من ${MAX_PDF_SIZE_MB}MB`
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      error: error.message || 'حدث خطأ أثناء المعالجة'
+    console.error(`❌ Background processing [${reqId}]:`, error);
+    updateProgress(reqId, 0, `خطأ: ${error.message}`);
+    progressStore.set(reqId, { 
+      progress: 0, 
+      error: error.message,
+      timestamp: Date.now() 
     });
   }
-});
+}
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
