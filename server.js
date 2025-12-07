@@ -198,7 +198,7 @@ function smartSplit(text, chunkSize) {
     if (current) chunks.push(current.trim());
   } else {
     // Fallback: split with overlap
-    console.log(`âš ï¸ No question patterns detected, using overlap splitting`);
+    console.log(`âš ï¸ No question patterns detected, using overlap splitting`);
     for (let i = 0; i < text.length; i += chunkSize - OVERLAP) {
       const chunk = text.substring(i, i + chunkSize);
       if (chunk.trim()) chunks.push(chunk.trim());
@@ -270,7 +270,7 @@ async function extractWithGPT4(chunk, index, total, reqId) {
       questions = parsed.questions || parsed.Questions || [];
       
       if (!Array.isArray(questions)) {
-        console.warn('âš ï¸ Questions is not an array');
+        console.warn('âš ï¸ Questions is not an array');
         questions = [];
       }
     } catch (e) {
@@ -345,7 +345,7 @@ function deduplicateQuestions(questions) {
       seen.add(normalized);
       unique.push(q);
     } else {
-      console.log(`âš ï¸ Skipped duplicate: ${q.question.substring(0, 50)}...`);
+      console.log(`âš ï¸ Skipped duplicate: ${q.question.substring(0, 50)}...`);
     }
   }
   
@@ -410,10 +410,13 @@ app.get('/api/progress/:requestId', (req, res) => {
 });
 
 app.post('/api/quiz-from-pdf', upload.single('file'), async (req, res) => {
+    let requestId = req.headers['x-request-id'] || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   const start = Date.now();
   const reqId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   try {
+    updateProgress(requestId, 10, 'رفع الملف...');
+    
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'Ù„Ù… ÙŠØªÙ… Ø±ÙØ¹ Ù…Ù„Ù' });
     }
